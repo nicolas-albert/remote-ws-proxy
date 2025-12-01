@@ -42,6 +42,7 @@ program
   .option('-x, --proxy <url>', 'HTTP/HTTPS proxy URL to reach the server')
   .option('--insecure', 'Disable TLS verification to the server/proxy (use only for testing)')
   .option('-t, --transport <mode>', 'Transport mode: ws or http', 'ws')
+  .option('--debug', 'Verbose debug logs for HTTP transport')
   .action((arg1, arg2, options) => {
     const { serverUrl, session } = resolveServerAndSession(arg1, arg2);
     if (!serverUrl) {
@@ -54,6 +55,7 @@ program
       proxyUrl: options.proxy,
       insecure: options.insecure,
       transport: options.transport,
+      debug: options.debug,
     });
   });
 
@@ -64,6 +66,7 @@ program
   .option('-x, --proxy <url>', 'HTTP/HTTPS proxy URL to reach the server')
   .option('--insecure', 'Disable TLS verification to the server/proxy (use only for testing)')
   .option('-t, --transport <mode>', 'Transport mode: ws or http', 'ws')
+  .option('--debug', 'Verbose debug logs for HTTP transport')
   .action((arg1, arg2, port, options) => {
     let portArg = port;
     // Two-argument form: `rwp proxy <serverUrl> <port>`
@@ -85,6 +88,7 @@ program
       proxyUrl: options.proxy,
       insecure: options.insecure,
       transport: options.transport,
+      debug: options.debug,
     });
   });
 

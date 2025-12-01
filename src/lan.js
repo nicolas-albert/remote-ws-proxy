@@ -4,7 +4,15 @@ const https = require('https');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const fetchHttp = require('node-fetch');
-const { decodeBody, encodeBody, sanitizeHeaders, safeSend, createLogger, parseServerTarget } = require('./common');
+const {
+  decodeBody,
+  encodeBody,
+  sanitizeHeaders,
+  safeSend,
+  createLogger,
+  createDebugLogger,
+  parseServerTarget,
+} = require('./common');
 
 function normalizeResponseHeaders(headers) {
   if (headers && typeof headers.raw === 'function') {
@@ -52,9 +60,10 @@ function buildDirectAgent(insecure) {
   return new https.Agent({ rejectUnauthorized: false });
 }
 
-function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 'ws' }) {
+function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 'ws', debug = false }) {
   const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`lan:${resolvedSession}`);
+  const dlog = createDebugLogger(debug, `lan:${resolvedSession}:debug`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   const proxyAgent = buildProxyAgent(agentUrl, insecure);
   const directAgent = buildDirectAgent(insecure);
@@ -134,6 +143,8 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
     const baseHttp = httpBase.origin; // server root (no session path)
 
     async function sendHttp(message) {
+      const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
+      dlog('HTTP send', url, JSON.stringify(message).slice(0, 200));
       await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -145,13 +156,19 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
     async function poll() {
       for (;;) {
         try {
-          const res = await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`, {
+          const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`;
+          const res = await fetchHttp(url, {
             method: 'GET',
             agent: fetchAgent,
           });
+          dlog('HTTP recv status', res.status, res.statusText);
           if (res.status === 204) continue;
           if (!res.ok) {
-            log(`HTTP recv failed: ${res.status}`);
+            let bodyText = '';
+            try {
+              bodyText = await res.text();
+            } catch (_) {}
+            log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
             await new Promise((r) => setTimeout(r, 1000));
             continue;
           }

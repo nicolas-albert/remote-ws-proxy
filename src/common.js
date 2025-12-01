@@ -53,6 +53,14 @@ function createLogger(scope) {
   };
 }
 
+function createDebugLogger(enabled, scope) {
+  const base = createLogger(scope);
+  return (...args) => {
+    if (!enabled) return;
+    base(...args);
+  };
+}
+
 function toWebSocketUrl(input) {
   if (!input) throw new Error('Missing server URL');
   if (input.startsWith('ws://') || input.startsWith('wss://')) return input;
@@ -92,6 +100,7 @@ module.exports = {
   sanitizeHeaders,
   collectRequestBody,
   createLogger,
+  createDebugLogger,
   parseServerTarget,
   toWebSocketUrl,
   toHttpUrl,

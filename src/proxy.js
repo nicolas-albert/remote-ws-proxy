@@ -12,6 +12,7 @@ const {
   sanitizeHeaders,
   safeSend,
   createLogger,
+  createDebugLogger,
   parseServerTarget,
 } = require('./common');
 
@@ -23,9 +24,19 @@ function buildProxyAgent(proxyUrl, insecure) {
   return new HttpsProxyAgent(url, opts);
 }
 
-function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxyUrl, insecure = false, transport = 'ws' }) {
+function startProxy({
+  serverUrl,
+  session,
+  port = 3128,
+  host = '127.0.0.1',
+  proxyUrl,
+  insecure = false,
+  transport = 'ws',
+  debug = false,
+}) {
   const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`proxy:${resolvedSession}`);
+  const dlog = createDebugLogger(debug, `proxy:${resolvedSession}:debug`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   const agent = buildProxyAgent(agentUrl, insecure);
   const pendingHttp = new Map(); // id -> {res, timer}
@@ -230,7 +241,9 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
     const baseHttp = httpBase.origin; // server root (no session path)
 
     async function sendHttp(message) {
-      await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
+      const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
+      dlog('HTTP send', url, JSON.stringify(message).slice(0, 200));
+      await fetchHttp(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'proxy', message }),
@@ -241,13 +254,19 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
     async function poll() {
       for (;;) {
         try {
-          const res = await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`, {
+          const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`;
+          const res = await fetchHttp(url, {
             method: 'GET',
             agent,
           });
+          dlog('HTTP recv status', res.status, res.statusText);
           if (res.status === 204) continue;
           if (!res.ok) {
-            log(`HTTP recv failed: ${res.status}`);
+            let bodyText = '';
+            try {
+              bodyText = await res.text();
+            } catch (_) {}
+            log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
             await new Promise((r) => setTimeout(r, 1000));
             continue;
           }
