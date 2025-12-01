@@ -3,6 +3,7 @@ const net = require('net');
 const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { HttpProxyAgent } = require('http-proxy-agent');
 const fetchHttp = require('node-fetch');
 const {
   encodeBody,
@@ -14,15 +15,19 @@ const {
   parseServerTarget,
 } = require('./common');
 
+function buildProxyAgent(proxyUrl, insecure) {
+  if (!proxyUrl) return null;
+  const url = new URL(proxyUrl);
+  const opts = { rejectUnauthorized: !insecure };
+  if (url.protocol === 'http:') return new HttpProxyAgent(url, opts);
+  return new HttpsProxyAgent(url, opts);
+}
+
 function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxyUrl, insecure = false, transport = 'ws' }) {
   const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`proxy:${resolvedSession}`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const agent = agentUrl
-    ? new HttpsProxyAgent(agentUrl, {
-        rejectUnauthorized: !insecure,
-      })
-    : undefined;
+  const agent = buildProxyAgent(agentUrl, insecure);
   const pendingHttp = new Map(); // id -> {res, timer}
   const tunnels = new Map(); // id -> {clientSocket, acked, queue}
   let ws;

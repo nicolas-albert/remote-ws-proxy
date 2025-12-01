@@ -1,6 +1,8 @@
 const WebSocket = require('ws');
 const net = require('net');
+const https = require('https');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { HttpProxyAgent } = require('http-proxy-agent');
 const fetchHttp = require('node-fetch');
 const { decodeBody, encodeBody, sanitizeHeaders, safeSend, createLogger, parseServerTarget } = require('./common');
 
@@ -37,15 +39,26 @@ async function performHttpRequest(request) {
   };
 }
 
+function buildProxyAgent(proxyUrl, insecure) {
+  if (!proxyUrl) return null;
+  const url = new URL(proxyUrl);
+  const opts = { rejectUnauthorized: !insecure };
+  if (url.protocol === 'http:') return new HttpProxyAgent(url, opts);
+  return new HttpsProxyAgent(url, opts);
+}
+
+function buildDirectAgent(insecure) {
+  if (!insecure) return null;
+  return new https.Agent({ rejectUnauthorized: false });
+}
+
 function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 'ws' }) {
   const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`lan:${resolvedSession}`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const agent = agentUrl
-    ? new HttpsProxyAgent(agentUrl, {
-        rejectUnauthorized: !insecure,
-      })
-    : undefined;
+  const proxyAgent = buildProxyAgent(agentUrl, insecure);
+  const directAgent = buildDirectAgent(insecure);
+  const fetchAgent = proxyAgent || directAgent;
 
   const tunnels = new Map(); // id -> net.Socket
 
@@ -124,7 +137,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'lan', message }),
-        agent,
+        agent: fetchAgent,
       });
     }
 
@@ -133,7 +146,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
         try {
           const res = await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`, {
             method: 'GET',
-            agent,
+            agent: fetchAgent,
           });
           if (res.status === 204) continue;
           if (!res.ok) {
@@ -161,7 +174,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
   }
 
   const wsOptions = {};
-  if (agent) wsOptions.agent = agent;
+  if (proxyAgent) wsOptions.agent = proxyAgent;
   if (insecure) wsOptions.rejectUnauthorized = false;
   const ws = new WebSocket(wsUrl, wsOptions);
 
