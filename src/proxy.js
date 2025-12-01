@@ -231,8 +231,9 @@ function startProxy({
     log(`HTTP proxy listening on http://${host}:${port}`);
   });
 
+  let sendHttp = null;
   sendToServer = (msg) => {
-    if (transport === 'http') {
+    if (transport === 'http' && sendHttp) {
       return sendHttp(msg);
     }
     safeSend(ws, msg);
@@ -242,7 +243,7 @@ function startProxy({
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
 
-    async function sendHttp(message) {
+    sendHttp = async function (message) {
       const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
       const body = JSON.stringify({ role: 'proxy', message });
       dlog('HTTP send', url, body.slice(0, 200), 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${body}' ${url}`);
@@ -252,7 +253,7 @@ function startProxy({
         body,
         agent,
       });
-    }
+    };
 
     async function poll() {
       for (;;) {
