@@ -1,6 +1,6 @@
 {
   "name": "remote-ws-proxy",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Remote HTTP proxy over WebSocket with server, LAN agent, and local proxy CLI.",
   "main": "src/server.js",
   "bin": {
@@ -35,6 +35,7 @@
   "dependencies": {
     "commander": "^14.0.2",
     "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^2.7.0",
     "ws": "^8.18.3"
   }
 }

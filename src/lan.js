@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const net = require('net');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const fetchHttp = require('node-fetch');
 const { decodeBody, encodeBody, sanitizeHeaders, safeSend, createLogger, parseServerTarget } = require('./common');
 
 function normalizeResponseHeaders(headers) {
@@ -119,20 +120,20 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
     const baseHttp = httpUrl.replace(/\/+$/, '');
 
     async function sendHttp(message) {
-      await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
+      await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'lan', message }),
-        dispatcher: agent,
+        agent,
       });
     }
 
     async function poll() {
       for (;;) {
         try {
-          const res = await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`, {
+          const res = await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`, {
             method: 'GET',
-            dispatcher: agent,
+            agent,
           });
           if (res.status === 204) continue;
           if (!res.ok) {

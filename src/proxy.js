@@ -3,6 +3,7 @@ const net = require('net');
 const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const fetchHttp = require('node-fetch');
 const {
   encodeBody,
   decodeBody,
@@ -223,20 +224,20 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
     const baseHttp = httpUrl.replace(/\/+$/, '');
 
     async function sendHttp(message) {
-      await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
+      await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'proxy', message }),
-        dispatcher: agent,
+        agent,
       });
     }
 
     async function poll() {
       for (;;) {
         try {
-          const res = await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`, {
+          const res = await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`, {
             method: 'GET',
-            dispatcher: agent,
+            agent,
           });
           if (res.status === 204) continue;
           if (!res.ok) {
