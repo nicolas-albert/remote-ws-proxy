@@ -31,6 +31,7 @@ On the remote/LAN side, register the session:
 rwp lan https://your-rwp-endpoint.example.com/my-session
 # still valid: rwp lan my-session ws://server-host:8080
 # to reach the server via an outbound proxy: rwp lan https://your-rwp-endpoint.example.com/my-session --proxy http://proxy:3128
+# if the outbound proxy uses an untrusted TLS cert (not recommended): add --insecure
 ```
 
 Locally, run the HTTP proxy (default port 3128):

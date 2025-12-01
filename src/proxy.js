@@ -13,11 +13,13 @@ const {
   parseServerTarget,
 } = require('./common');
 
-function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxyUrl }) {
+function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxyUrl, insecure = false }) {
   const { wsUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`proxy:${resolvedSession}`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const wsOptions = agentUrl ? { agent: new HttpsProxyAgent(agentUrl) } : {};
+  const wsOptions = {};
+  if (agentUrl) wsOptions.agent = new HttpsProxyAgent(agentUrl);
+  if (insecure) wsOptions.rejectUnauthorized = false;
   const ws = new WebSocket(wsUrl, wsOptions);
   const pendingHttp = new Map(); // id -> {res, timer}
   const tunnels = new Map(); // id -> {clientSocket, acked, queue}

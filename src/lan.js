@@ -36,11 +36,13 @@ async function performHttpRequest(request) {
   };
 }
 
-function startLan({ serverUrl, session, proxyUrl }) {
+function startLan({ serverUrl, session, proxyUrl, insecure = false }) {
   const { wsUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`lan:${resolvedSession}`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const wsOptions = agentUrl ? { agent: new HttpsProxyAgent(agentUrl) } : {};
+  const wsOptions = {};
+  if (agentUrl) wsOptions.agent = new HttpsProxyAgent(agentUrl);
+  if (insecure) wsOptions.rejectUnauthorized = false;
   const ws = new WebSocket(wsUrl, wsOptions);
   const tunnels = new Map(); // id -> net.Socket
 

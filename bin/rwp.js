@@ -40,13 +40,14 @@ program
   .command('lan <arg1> [arg2]')
   .description('Register the LAN agent for a session (session can be path segment in server URL)')
   .option('-x, --proxy <url>', 'HTTP/HTTPS proxy URL to reach the server')
+  .option('--insecure', 'Disable TLS verification to the server/proxy (use only for testing)')
   .action((arg1, arg2, options) => {
     const { serverUrl, session } = resolveServerAndSession(arg1, arg2);
     if (!serverUrl) {
       console.error('Usage: rwp lan <session> <serverUrl> OR rwp lan <serverUrl-with-session>');
       process.exit(1);
     }
-    startLan({ session, serverUrl, proxyUrl: options.proxy });
+    startLan({ session, serverUrl, proxyUrl: options.proxy, insecure: options.insecure });
   });
 
 program
@@ -54,6 +55,7 @@ program
   .description('Run the local HTTP proxy and connect to the server for the session (session can be path segment in server URL)')
   .option('-H, --host <host>', 'Local proxy host', '127.0.0.1')
   .option('-x, --proxy <url>', 'HTTP/HTTPS proxy URL to reach the server')
+  .option('--insecure', 'Disable TLS verification to the server/proxy (use only for testing)')
   .action((arg1, arg2, port, options) => {
     let portArg = port;
     // Two-argument form: `rwp proxy <serverUrl> <port>`
@@ -67,7 +69,7 @@ program
       process.exit(1);
     }
     const listenPort = portArg && !Number.isNaN(Number(portArg)) ? Number(portArg) : 3128;
-    startProxy({ session, serverUrl, port: listenPort, host: options.host, proxyUrl: options.proxy });
+    startProxy({ session, serverUrl, port: listenPort, host: options.host, proxyUrl: options.proxy, insecure: options.insecure });
   });
 
 program.parse();
