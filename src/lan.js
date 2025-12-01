@@ -123,7 +123,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'lan', message }),
-        agent,
+        dispatcher: agent,
       });
     }
 
@@ -132,7 +132,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
         try {
           const res = await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`, {
             method: 'GET',
-            agent,
+            dispatcher: agent,
           });
           if (res.status === 204) continue;
           if (!res.ok) {

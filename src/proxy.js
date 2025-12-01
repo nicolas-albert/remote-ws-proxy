@@ -227,7 +227,7 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'proxy', message }),
-        agent,
+        dispatcher: agent,
       });
     }
 
@@ -236,7 +236,7 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
         try {
           const res = await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`, {
             method: 'GET',
-            agent,
+            dispatcher: agent,
           });
           if (res.status === 204) continue;
           if (!res.ok) {
