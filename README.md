@@ -50,10 +50,12 @@ npx -y -p github:nicolas-albert/remote-ws-proxy rwp --help
 npx -y -p github:nicolas-albert/remote-ws-proxy rwp proxy https://your-rwp-endpoint.example.com/my-session 3128
 ```
 
-### Offline/air-gapped install from a release tarball
+### Offline/air-gapped install from a release archive
 
-1. Download the `.tar.gz` asset attached to a tagged release (`v*`) on GitHub.
-2. Extract: `tar -xzf remote-ws-proxy-<tag>.tar.gz && cd remote-ws-proxy-<tag>`.
+1. Download the `.tar.gz` (Linux/macOS) or `.zip` (Windows) asset attached to a tagged release (`v*`) on GitHub.
+2. Extract:
+   - macOS/Linux: `tar -xzf remote-ws-proxy-<tag>.tar.gz && cd remote-ws-proxy-<tag>`
+   - Windows: unzip the `.zip` archive.
 3. Node.js 18+ required. No npm install needed (dependencies bundled).
 4. Run directly: `node bin/rwp.js server ...`, `node bin/rwp.js lan ...`, `node bin/rwp.js proxy ...`.
 
