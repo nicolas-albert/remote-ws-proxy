@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const net = require('net');
 const https = require('https');
+const tls = require('tls');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const fetchHttp = require('node-fetch');
@@ -61,7 +62,45 @@ function buildDirectAgent(insecure) {
   return new https.Agent({ rejectUnauthorized: false });
 }
 
-function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 'ws', debug = false }) {
+async function connectThroughProxy(proxyUrl, targetHost, targetPort, insecure) {
+  const url = new URL(proxyUrl);
+  const isHttpsProxy = url.protocol === 'https:';
+  const connectOpts = {
+    host: url.hostname,
+    port: url.port || (isHttpsProxy ? 443 : 80),
+    rejectUnauthorized: !insecure,
+    servername: url.hostname,
+  };
+  const socket = isHttpsProxy ? tls.connect(connectOpts) : net.connect(connectOpts);
+
+  return await new Promise((resolve, reject) => {
+    socket.once('error', reject);
+    socket.once('close', () => reject(new Error('Proxy socket closed')));
+    socket.once('connect', () => {
+      const req = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\nProxy-Connection: Keep-Alive\r\n\r\n`;
+      socket.write(req);
+    });
+
+    let buffer = '';
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      if (buffer.includes('\r\n\r\n')) {
+        const [statusLine] = buffer.split('\r\n');
+        const match = statusLine.match(/HTTP\/1\.[01] (\d{3})/);
+        const code = match ? Number(match[1]) : 0;
+        if (code === 200) {
+          socket.removeAllListeners('data');
+          socket.removeAllListeners('error');
+          resolve(socket);
+        } else {
+          reject(new Error(`Proxy CONNECT failed with status ${code}`));
+        }
+      }
+    });
+  });
+}
+
+function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false, transport = 'ws', debug = false }) {
   const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`lan:${resolvedSession}`);
   const dlog = createDebugLogger(debug, `lan:${resolvedSession}:debug`);
@@ -72,6 +111,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
   const fetchAgent = proxyAgent || directAgent;
 
   const tunnels = new Map(); // id -> net.Socket
+  const tunnelProxyUrl = tunnelProxy === true ? agentUrl : tunnelProxy;
 
   function handleMessage(payload, sendFn) {
     switch (payload.type) {
@@ -93,9 +133,21 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
           sendFn({ type: 'connect-error', id, message: 'Invalid host/port' });
           break;
         }
-        const socket = net.createConnection({ host, port: Number(port) }, () => {
-          sendFn({ type: 'connect-ack', id });
-        });
+        const connectSocket = async () => {
+          if (tunnelProxyUrl) {
+            dlog('CONNECT via tunnel-proxy', tunnelProxyUrl, 'to', `${host}:${port}`);
+            return connectThroughProxy(tunnelProxyUrl, host, Number(port), insecure);
+          }
+          return net.createConnection({ host, port: Number(port) });
+        };
+        let socket;
+        try {
+          socket = await connectSocket();
+        } catch (err) {
+          sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
+          break;
+        }
+        sendFn({ type: 'connect-ack', id });
         tunnels.set(id, socket);
 
         socket.on('data', (chunk) => {

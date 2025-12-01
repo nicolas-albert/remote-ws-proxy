@@ -42,6 +42,7 @@ program
   .option('-x, --proxy <url>', 'HTTP/HTTPS proxy URL to reach the server')
   .option('--insecure', 'Disable TLS verification to the server/proxy (use only for testing)')
   .option('-t, --transport <mode>', 'Transport mode: ws or http', 'ws')
+  .option('--tunnel-proxy <url>', 'HTTP/HTTPS proxy to reach target hosts for CONNECT tunnels (TCP). Use "true" to reuse --proxy.')
   .option('--debug', 'Verbose debug logs for HTTP transport')
   .action((arg1, arg2, options) => {
     const { serverUrl, session } = resolveServerAndSession(arg1, arg2);
@@ -53,6 +54,7 @@ program
       session,
       serverUrl,
       proxyUrl: options.proxy,
+      tunnelProxy: options.tunnelProxy === 'true' ? true : options.tunnelProxy,
       insecure: options.insecure,
       transport: options.transport,
       debug: options.debug,
