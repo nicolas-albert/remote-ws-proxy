@@ -140,31 +140,30 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
           }
           return net.createConnection({ host, port: Number(port) });
         };
-        let socket;
-        try {
-          socket = await connectSocket();
-        } catch (err) {
-          sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
-          break;
-        }
-        sendFn({ type: 'connect-ack', id });
-        tunnels.set(id, socket);
+        connectSocket()
+          .then((socket) => {
+            sendFn({ type: 'connect-ack', id });
+            tunnels.set(id, socket);
 
-        socket.on('data', (chunk) => {
-          sendFn({ type: 'connect-data', id, dataBase64: encodeBody(chunk) });
-        });
+            socket.on('data', (chunk) => {
+              sendFn({ type: 'connect-data', id, dataBase64: encodeBody(chunk) });
+            });
 
-        socket.on('error', (err) => {
-          sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
-          socket.destroy();
-          tunnels.delete(id);
-        });
+            socket.on('error', (err) => {
+              sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
+              socket.destroy();
+              tunnels.delete(id);
+            });
 
-        socket.on('end', () => {
-          sendFn({ type: 'connect-end', id });
-          socket.destroy();
-          tunnels.delete(id);
-        });
+            socket.on('end', () => {
+              sendFn({ type: 'connect-end', id });
+              socket.destroy();
+              tunnels.delete(id);
+            });
+          })
+          .catch((err) => {
+            sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
+          });
 
         break;
       }
