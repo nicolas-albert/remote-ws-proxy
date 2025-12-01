@@ -242,11 +242,12 @@ function startProxy({
 
     async function sendHttp(message) {
       const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
-      dlog('HTTP send', url, JSON.stringify(message).slice(0, 200));
+      const body = JSON.stringify({ role: 'proxy', message });
+      dlog('HTTP send', url, body.slice(0, 200), 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${body}' ${url}`);
       await fetchHttp(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ role: 'proxy', message }),
+        body,
         agent,
       });
     }
@@ -255,6 +256,7 @@ function startProxy({
       for (;;) {
         try {
           const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`;
+          dlog('HTTP recv', url, 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
           const res = await fetchHttp(url, {
             method: 'GET',
             agent,

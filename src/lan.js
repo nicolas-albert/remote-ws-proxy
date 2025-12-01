@@ -144,11 +144,12 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
 
     async function sendHttp(message) {
       const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
-      dlog('HTTP send', url, JSON.stringify(message).slice(0, 200));
-      await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
+      const body = JSON.stringify({ role: 'lan', message });
+      dlog('HTTP send', url, body.slice(0, 200), 'curl:', `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${body}' ${url}`);
+      await fetchHttp(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ role: 'lan', message }),
+        body,
         agent: fetchAgent,
       });
     }
@@ -157,6 +158,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
       for (;;) {
         try {
           const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`;
+          dlog('HTTP recv', url, 'curl:', `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
           const res = await fetchHttp(url, {
             method: 'GET',
             agent: fetchAgent,
