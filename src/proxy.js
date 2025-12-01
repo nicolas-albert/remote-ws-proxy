@@ -18,7 +18,11 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
   const log = createLogger(`proxy:${resolvedSession}`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   const wsOptions = {};
-  if (agentUrl) wsOptions.agent = new HttpsProxyAgent(agentUrl);
+  if (agentUrl) {
+    wsOptions.agent = new HttpsProxyAgent(agentUrl, {
+      rejectUnauthorized: !insecure,
+    });
+  }
   if (insecure) wsOptions.rejectUnauthorized = false;
   const ws = new WebSocket(wsUrl, wsOptions);
   const pendingHttp = new Map(); // id -> {res, timer}
