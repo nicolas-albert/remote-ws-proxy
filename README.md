@@ -44,6 +44,13 @@ rwp proxy https://your-rwp-endpoint.example.com/my-session 3128
 
 Configure your browser/system proxy to `http://127.0.0.1:3128`. HTTP and HTTPS (via CONNECT) are supported.
 
+### Transport modes
+- Default: WebSocket (`--transport ws`).
+- Fallback when WS is blocked by proxies: HTTP long-poll tunnel (`--transport http`), using `/api/tunnel/.../send` and `/recv` on the server (no Upgrade).
+- Example with HTTP transport and outbound proxy:  
+  `rwp lan https://your-rwp-endpoint.example.com/my-session --transport http --proxy http://proxy:3128`  
+  `rwp proxy https://your-rwp-endpoint.example.com/my-session 3128 --transport http --proxy http://proxy:3128`
+
 ### Run via npx directly from GitHub (no local clone)
 
 ```bash

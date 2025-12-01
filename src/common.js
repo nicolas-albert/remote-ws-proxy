@@ -61,6 +61,14 @@ function toWebSocketUrl(input) {
   throw new Error('Server URL must start with http(s):// or ws(s)://');
 }
 
+function toHttpUrl(input) {
+  if (!input) throw new Error('Missing server URL');
+  if (input.startsWith('http://') || input.startsWith('https://')) return input;
+  if (input.startsWith('ws://')) return input.replace(/^ws:\/\//i, 'http://');
+  if (input.startsWith('wss://')) return input.replace(/^wss:\/\//i, 'https://');
+  throw new Error('Server URL must start with http(s):// or ws(s)://');
+}
+
 function resolveSessionFromUrl(urlObj) {
   const segments = urlObj.pathname.split('/').filter(Boolean);
   return segments.length ? segments[segments.length - 1] : null;
@@ -68,12 +76,13 @@ function resolveSessionFromUrl(urlObj) {
 
 function parseServerTarget(rawUrl, explicitSession) {
   const wsUrl = toWebSocketUrl(rawUrl);
-  const urlObj = new URL(wsUrl);
+  const httpUrl = toHttpUrl(rawUrl);
+  const urlObj = new URL(httpUrl);
   const session = explicitSession || resolveSessionFromUrl(urlObj);
   if (!session) {
     throw new Error('Session not provided; include it as an argument or path segment');
   }
-  return { wsUrl: urlObj.toString(), session };
+  return { wsUrl: new URL(wsUrl, wsUrl).toString(), httpUrl: urlObj.toString(), session };
 }
 
 module.exports = {
@@ -85,4 +94,5 @@ module.exports = {
   createLogger,
   parseServerTarget,
   toWebSocketUrl,
+  toHttpUrl,
 };

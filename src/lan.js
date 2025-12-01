@@ -36,19 +36,133 @@ async function performHttpRequest(request) {
   };
 }
 
-function startLan({ serverUrl, session, proxyUrl, insecure = false }) {
-  const { wsUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
+function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 'ws' }) {
+  const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`lan:${resolvedSession}`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const wsOptions = {};
-  if (agentUrl) {
-    wsOptions.agent = new HttpsProxyAgent(agentUrl, {
-      rejectUnauthorized: !insecure,
-    });
+  const agent = agentUrl
+    ? new HttpsProxyAgent(agentUrl, {
+        rejectUnauthorized: !insecure,
+      })
+    : undefined;
+
+  const tunnels = new Map(); // id -> net.Socket
+
+  function handleMessage(payload, sendFn) {
+    switch (payload.type) {
+      case 'hello-ack':
+        return;
+      case 'http-request': {
+        const { id, request } = payload;
+        performHttpRequest(request)
+          .then((result) => sendFn({ type: 'http-response', id, ...result }))
+          .catch((err) => {
+            log(`Request failed for ${request?.url || 'unknown'}: ${err.message || err}`);
+            sendFn({ type: 'http-response', id, error: err.message || 'Request failed' });
+          });
+        break;
+      }
+      case 'connect-start': {
+        const { id, host, port } = payload;
+        if (!host || !port) {
+          sendFn({ type: 'connect-error', id, message: 'Invalid host/port' });
+          break;
+        }
+        const socket = net.createConnection({ host, port: Number(port) }, () => {
+          sendFn({ type: 'connect-ack', id });
+        });
+        tunnels.set(id, socket);
+
+        socket.on('data', (chunk) => {
+          sendFn({ type: 'connect-data', id, dataBase64: encodeBody(chunk) });
+        });
+
+        socket.on('error', (err) => {
+          sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
+          socket.destroy();
+          tunnels.delete(id);
+        });
+
+        socket.on('end', () => {
+          sendFn({ type: 'connect-end', id });
+          socket.destroy();
+          tunnels.delete(id);
+        });
+
+        break;
+      }
+      case 'connect-data': {
+        const { id, dataBase64 } = payload;
+        const socket = tunnels.get(id);
+        if (socket) {
+          socket.write(decodeBody(dataBase64));
+        } else {
+          sendFn({ type: 'connect-error', id, message: 'Unknown tunnel' });
+        }
+        break;
+      }
+      case 'connect-end': {
+        const { id } = payload;
+        const socket = tunnels.get(id);
+        if (socket) {
+          socket.end();
+          tunnels.delete(id);
+        }
+        break;
+      }
+      default:
+        log(`Unsupported message type: ${payload.type}`);
+    }
   }
+
+  if (transport === 'http') {
+    const baseHttp = httpUrl.replace(/\/+$/, '');
+
+    async function sendHttp(message) {
+      await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ role: 'lan', message }),
+        agent,
+      });
+    }
+
+    async function poll() {
+      for (;;) {
+        try {
+          const res = await fetch(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`, {
+            method: 'GET',
+            agent,
+          });
+          if (res.status === 204) continue;
+          if (!res.ok) {
+            log(`HTTP recv failed: ${res.status}`);
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
+          const text = await res.text();
+          if (!text) continue;
+          const payload = JSON.parse(text);
+          handleMessage(payload, sendHttp);
+        } catch (err) {
+          log(`HTTP poll error: ${err.message || err}`);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+    }
+
+    sendHttp({ type: 'hello', role: 'lan', session: resolvedSession }).catch((err) =>
+      log(`Hello failed: ${err.message || err}`)
+    );
+    poll();
+    log(`using HTTP tunnel to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    return { transport: 'http' };
+  }
+
+  const wsOptions = {};
+  if (agent) wsOptions.agent = agent;
   if (insecure) wsOptions.rejectUnauthorized = false;
   const ws = new WebSocket(wsUrl, wsOptions);
-  const tunnels = new Map(); // id -> net.Socket
 
   ws.on('open', () => {
     safeSend(ws, { type: 'hello', role: 'lan', session: resolvedSession });
@@ -65,7 +179,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false }) {
     log(`WebSocket error: ${err.message || err}`);
   });
 
-  ws.on('message', async (data) => {
+  ws.on('message', (data) => {
     let payload;
     try {
       payload = JSON.parse(data.toString());
@@ -73,73 +187,7 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false }) {
       log('Invalid JSON from server');
       return;
     }
-
-    switch (payload.type) {
-      case 'hello-ack':
-        // No-op; useful for connectivity confirmation
-        return;
-      case 'http-request': {
-        const { id, request } = payload;
-        try {
-          const result = await performHttpRequest(request);
-          safeSend(ws, { type: 'http-response', id, ...result });
-        } catch (err) {
-          log(`Request failed for ${request?.url || 'unknown'}: ${err.message || err}`);
-          safeSend(ws, { type: 'http-response', id, error: err.message || 'Request failed' });
-        }
-        break;
-      }
-      case 'connect-start': {
-        const { id, host, port } = payload;
-        if (!host || !port) {
-          safeSend(ws, { type: 'connect-error', id, message: 'Invalid host/port' });
-          break;
-        }
-        const socket = net.createConnection({ host, port: Number(port) }, () => {
-          safeSend(ws, { type: 'connect-ack', id });
-        });
-        tunnels.set(id, socket);
-
-        socket.on('data', (chunk) => {
-          safeSend(ws, { type: 'connect-data', id, dataBase64: encodeBody(chunk) });
-        });
-
-        socket.on('error', (err) => {
-          safeSend(ws, { type: 'connect-error', id, message: err.message || 'Socket error' });
-          socket.destroy();
-          tunnels.delete(id);
-        });
-
-        socket.on('end', () => {
-          safeSend(ws, { type: 'connect-end', id });
-          socket.destroy();
-          tunnels.delete(id);
-        });
-
-        break;
-      }
-      case 'connect-data': {
-        const { id, dataBase64 } = payload;
-        const socket = tunnels.get(id);
-        if (socket) {
-          socket.write(decodeBody(dataBase64));
-        } else {
-          safeSend(ws, { type: 'connect-error', id, message: 'Unknown tunnel' });
-        }
-        break;
-      }
-      case 'connect-end': {
-        const { id } = payload;
-        const socket = tunnels.get(id);
-        if (socket) {
-          socket.end();
-          tunnels.delete(id);
-        }
-        break;
-      }
-      default:
-        log(`Unsupported message type: ${payload.type}`);
-    }
+    handleMessage(payload, (p) => safeSend(ws, p));
   });
 
   return { ws };
