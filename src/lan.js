@@ -130,7 +130,8 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
   }
 
   if (transport === 'http') {
-    const baseHttp = httpUrl.replace(/\/+$/, '');
+    const httpBase = new URL(httpUrl);
+    const baseHttp = httpBase.origin; // server root (no session path)
 
     async function sendHttp(message) {
       await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {

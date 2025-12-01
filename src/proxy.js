@@ -226,7 +226,8 @@ function startProxy({ serverUrl, session, port = 3128, host = '127.0.0.1', proxy
   };
 
   if (transport === 'http') {
-    const baseHttp = httpUrl.replace(/\/+$/, '');
+    const httpBase = new URL(httpUrl);
+    const baseHttp = httpBase.origin; // server root (no session path)
 
     async function sendHttp(message) {
       await fetchHttp(`${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`, {
