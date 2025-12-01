@@ -47,12 +47,13 @@ async function performHttpRequest(request) {
   };
 }
 
-function buildProxyAgent(proxyUrl, insecure) {
+function buildProxyAgent(proxyUrl, insecure, targetProtocol) {
   if (!proxyUrl) return null;
   const url = new URL(proxyUrl);
   const opts = { rejectUnauthorized: !insecure };
-  if (url.protocol === 'http:') return new HttpProxyAgent(url, opts);
-  return new HttpsProxyAgent(url, opts);
+  // For HTTPS targets, use HttpsProxyAgent even if the proxy is HTTP to ensure CONNECT is used.
+  if (targetProtocol === 'https:') return new HttpsProxyAgent(url, opts);
+  return url.protocol === 'http:' ? new HttpProxyAgent(url, opts) : new HttpsProxyAgent(url, opts);
 }
 
 function buildDirectAgent(insecure) {
@@ -65,7 +66,8 @@ function startLan({ serverUrl, session, proxyUrl, insecure = false, transport = 
   const log = createLogger(`lan:${resolvedSession}`);
   const dlog = createDebugLogger(debug, `lan:${resolvedSession}:debug`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const proxyAgent = buildProxyAgent(agentUrl, insecure);
+  const targetProtocol = new URL(httpUrl).protocol;
+  const proxyAgent = buildProxyAgent(agentUrl, insecure, targetProtocol);
   const directAgent = buildDirectAgent(insecure);
   const fetchAgent = proxyAgent || directAgent;
 
