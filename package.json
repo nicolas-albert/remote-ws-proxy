@@ -1,0 +1,40 @@
+{
+  "name": "remote-ws-proxy",
+  "version": "1.0.0",
+  "description": "Remote HTTP proxy over WebSocket with server, LAN agent, and local proxy CLI.",
+  "main": "src/server.js",
+  "bin": {
+    "rwp": "./bin/rwp.js",
+    "remote-ws-proxy": "./bin/rwp.js"
+  },
+  "scripts": {
+    "start": "node ./bin/rwp.js server",
+    "test": "echo \"No automated tests yet\" && exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicolas-albert/remote-ws-proxy.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/nicolas-albert/remote-ws-proxy/issues"
+  },
+  "homepage": "https://github.com/nicolas-albert/remote-ws-proxy#readme",
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^14.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "ws": "^8.18.3"
+  }
+}
