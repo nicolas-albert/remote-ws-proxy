@@ -50,6 +50,13 @@ npx -y -p github:nicolas-albert/remote-ws-proxy rwp --help
 npx -y -p github:nicolas-albert/remote-ws-proxy rwp proxy https://your-rwp-endpoint.example.com/my-session 3128
 ```
 
+### Offline/airgapped install from a release tarball
+
+1. Télécharge l’archive `.tar.gz` attachée à un tag `v*` dans les Releases GitHub.
+2. Décompresse : `tar -xzf remote-ws-proxy-<tag>.tar.gz && cd remote-ws-proxy-<tag>`
+3. Node.js 18+ uniquement. Aucune installation npm nécessaire (dépendances incluses dans l’archive).
+4. Lance les commandes directement : `node bin/rwp.js server ...`, `node bin/rwp.js lan ...`, `node bin/rwp.js proxy ...`.
+
 ## Behavior notes
 
 - Messages are JSON framed over WebSocket with base64 payloads for bodies and tunnel data.
