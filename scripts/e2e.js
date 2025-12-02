@@ -13,6 +13,8 @@ const targets = [
   { name: 'wikipedia', url: 'https://fr.wikipedia.org/wiki/Wikip%C3%A9dia:Accueil_principal' },
 ];
 
+const { homepage } = require('../package.json');
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -52,6 +54,25 @@ async function runScenario(idx, scenario) {
     const srv = startProc('node', ['bin/rwp.js', 'server', '--port', `${serverPort}`, '--host', '127.0.0.1']);
     procs.push(srv);
     await delay(1000);
+
+    // homepage redirect check
+    if (homepage) {
+      const curlHome = spawn('curl', ['-I', '--max-time', '5', `http://127.0.0.1:${serverPort}`]);
+      let homeOut = '';
+      let homeErr = '';
+      curlHome.stdout.on('data', (d) => (homeOut += d.toString()));
+      curlHome.stderr.on('data', (d) => (homeErr += d.toString()));
+      const codeHome = await new Promise((resolve) => curlHome.on('close', resolve));
+      const okHome = codeHome === 0 && /302/.test(homeOut) && homeOut.toLowerCase().includes(homepage.toLowerCase());
+      if (!okHome) {
+        return {
+          scenario,
+          results: [
+            { target: 'homepage-redirect', ok: false, curlOut: homeOut, curlErr: homeErr || 'redirect failed' },
+          ],
+        };
+      }
+    }
 
     // lan
     const lanArgs = [
