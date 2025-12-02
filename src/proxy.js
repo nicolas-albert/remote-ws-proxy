@@ -45,10 +45,12 @@ function startProxy({
   const tunnels = new Map(); // id -> {clientSocket, acked, queue}
   let ws;
   let sendToServer = () => {};
+  let sendHttp = null;
+  let currentTransport = transport;
 
   function ensureConnected(responder) {
-    if (transport === 'ws' && ws.readyState !== WebSocket.OPEN) return false;
-    if (transport === 'http') return true;
+    if ((currentTransport === 'ws' || currentTransport === 'auto') && ws && ws.readyState !== WebSocket.OPEN) return false;
+    if (currentTransport === 'http') return true;
     return true;
   }
 
@@ -231,15 +233,14 @@ function startProxy({
     log(`HTTP proxy listening on http://${host}:${port}`);
   });
 
-  let sendHttp = null;
   sendToServer = (msg) => {
-    if (transport === 'http' && sendHttp) {
+    if ((currentTransport === 'http' || currentTransport === 'auto') && sendHttp) {
       return sendHttp(msg);
     }
-    safeSend(ws, msg);
+    if (ws) safeSend(ws, msg);
   };
 
-  if (transport === 'http') {
+  function runHttpMode() {
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
 
@@ -290,41 +291,66 @@ function startProxy({
       log(`Hello failed: ${err.message || err}`)
     );
     poll();
+    currentTransport = 'http';
     log(`connected via HTTP tunnel to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
     return { server, transport: 'http' };
   }
 
-  const wsOptions = {};
-  if (agent) wsOptions.agent = agent;
-  if (insecure) wsOptions.rejectUnauthorized = false;
-  ws = new WebSocket(wsUrl, wsOptions);
+  function runWsMode({ allowFallback } = {}) {
+    const wsOptions = {};
+    if (agent) wsOptions.agent = agent;
+    if (insecure) wsOptions.rejectUnauthorized = false;
+    ws = new WebSocket(wsUrl, wsOptions);
+    let opened = false;
+    currentTransport = 'ws';
 
-  ws.on('open', () => {
-    safeSend(ws, { type: 'hello', role: 'proxy', session: resolvedSession });
-    log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
-  });
+    ws.on('open', () => {
+      opened = true;
+      safeSend(ws, { type: 'hello', role: 'proxy', session: resolvedSession });
+      log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    });
 
-  ws.on('close', () => {
-    log('server connection closed');
-    cleanupPendingWithMessage('Server connection closed');
-  });
+    const fallback = () => {
+      if (!allowFallback) return;
+      log('WebSocket failed, falling back to HTTP transport');
+      ws.removeAllListeners();
+      try {
+        ws.close();
+      } catch (_) {}
+      runHttpMode();
+    };
 
-  ws.on('error', (err) => {
-    log(`WebSocket error: ${err.message || err}`);
-  });
+    ws.on('close', () => {
+      log('server connection closed');
+      cleanupPendingWithMessage('Server connection closed');
+      if (!opened && allowFallback) fallback();
+    });
 
-  ws.on('message', (data) => {
-    let payload;
-    try {
-      payload = JSON.parse(data.toString());
-    } catch (err) {
-      log('Invalid JSON from server');
-      return;
-    }
-    handleServerMessage(payload, (p) => safeSend(ws, p));
-  });
+    ws.on('error', (err) => {
+      log(`WebSocket error: ${err.message || err}`);
+      if (!opened && allowFallback) fallback();
+    });
 
-  return { ws, server };
+    ws.on('message', (data) => {
+      let payload;
+      try {
+        payload = JSON.parse(data.toString());
+      } catch (err) {
+        log('Invalid JSON from server');
+        return;
+      }
+      handleServerMessage(payload, (p) => safeSend(ws, p));
+    });
+    return { ws, server };
+  }
+
+  if (transport === 'http') {
+    return runHttpMode();
+  }
+  if (transport === 'auto') {
+    return runWsMode({ allowFallback: true });
+  }
+  return runWsMode({ allowFallback: false });
 }
 
 module.exports = { startProxy };

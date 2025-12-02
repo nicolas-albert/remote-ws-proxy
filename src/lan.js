@@ -112,25 +112,26 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
 
   const tunnels = new Map(); // id -> net.Socket
   const tunnelProxyUrl = tunnelProxy === true ? agentUrl : tunnelProxy;
+  let sendFn = () => {};
 
-  function handleMessage(payload, sendFn) {
+  function handleMessage(payload, sender) {
     switch (payload.type) {
       case 'hello-ack':
         return;
       case 'http-request': {
         const { id, request } = payload;
         performHttpRequest(request)
-          .then((result) => sendFn({ type: 'http-response', id, ...result }))
+          .then((result) => sender({ type: 'http-response', id, ...result }))
           .catch((err) => {
             log(`Request failed for ${request?.url || 'unknown'}: ${err.message || err}`);
-            sendFn({ type: 'http-response', id, error: err.message || 'Request failed' });
+            sender({ type: 'http-response', id, error: err.message || 'Request failed' });
           });
         break;
       }
       case 'connect-start': {
         const { id, host, port } = payload;
         if (!host || !port) {
-          sendFn({ type: 'connect-error', id, message: 'Invalid host/port' });
+          sender({ type: 'connect-error', id, message: 'Invalid host/port' });
           break;
         }
         const connectSocket = async () => {
@@ -142,27 +143,27 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
         };
         connectSocket()
           .then((socket) => {
-            sendFn({ type: 'connect-ack', id });
+            sender({ type: 'connect-ack', id });
             tunnels.set(id, socket);
 
             socket.on('data', (chunk) => {
-              sendFn({ type: 'connect-data', id, dataBase64: encodeBody(chunk) });
+              sender({ type: 'connect-data', id, dataBase64: encodeBody(chunk) });
             });
 
             socket.on('error', (err) => {
-              sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
+              sender({ type: 'connect-error', id, message: err.message || 'Socket error' });
               socket.destroy();
               tunnels.delete(id);
             });
 
             socket.on('end', () => {
-              sendFn({ type: 'connect-end', id });
+              sender({ type: 'connect-end', id });
               socket.destroy();
               tunnels.delete(id);
             });
           })
           .catch((err) => {
-            sendFn({ type: 'connect-error', id, message: err.message || 'Socket error' });
+            sender({ type: 'connect-error', id, message: err.message || 'Socket error' });
           });
 
         break;
@@ -173,7 +174,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
         if (socket) {
           socket.write(decodeBody(dataBase64));
         } else {
-          sendFn({ type: 'connect-error', id, message: 'Unknown tunnel' });
+          sender({ type: 'connect-error', id, message: 'Unknown tunnel' });
         }
         break;
       }
@@ -191,7 +192,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     }
   }
 
-  if (transport === 'http') {
+  function runHttpMode() {
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
 
@@ -241,43 +242,75 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     sendHttp({ type: 'hello', role: 'lan', session: resolvedSession }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
+    sendFn = sendHttp;
     poll();
     log(`using HTTP tunnel to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     return { transport: 'http' };
   }
 
-  const wsOptions = {};
-  if (proxyAgent) wsOptions.agent = proxyAgent;
-  if (insecure) wsOptions.rejectUnauthorized = false;
-  const ws = new WebSocket(wsUrl, wsOptions);
+  function runWsMode({ allowFallback } = {}) {
+    const wsOptions = {};
+    if (proxyAgent) wsOptions.agent = proxyAgent;
+    if (insecure) wsOptions.rejectUnauthorized = false;
+    const ws = new WebSocket(wsUrl, wsOptions);
+    let opened = false;
 
-  ws.on('open', () => {
-    safeSend(ws, { type: 'hello', role: 'lan', session: resolvedSession });
-    log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
-  });
+    sendFn = (p) => safeSend(ws, p);
 
-  ws.on('close', () => {
-    log('connection closed');
-    tunnels.forEach((socket) => socket.destroy());
-    tunnels.clear();
-  });
+    ws.on('open', () => {
+      opened = true;
+      safeSend(ws, { type: 'hello', role: 'lan', session: resolvedSession });
+      log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    });
 
-  ws.on('error', (err) => {
-    log(`WebSocket error: ${err.message || err}`);
-  });
+    const fallback = () => {
+      if (!allowFallback) return;
+      log('WebSocket failed, falling back to HTTP transport');
+      ws.removeAllListeners();
+      try {
+        ws.close();
+      } catch (_) {}
+      runHttpMode();
+    };
 
-  ws.on('message', (data) => {
-    let payload;
-    try {
-      payload = JSON.parse(data.toString());
-    } catch (err) {
-      log('Invalid JSON from server');
-      return;
-    }
-    handleMessage(payload, (p) => safeSend(ws, p));
-  });
+    ws.on('close', () => {
+      if (!opened && allowFallback) {
+        fallback();
+        return;
+      }
+      log('connection closed');
+      tunnels.forEach((socket) => socket.destroy());
+      tunnels.clear();
+    });
 
-  return { ws };
+    ws.on('error', (err) => {
+      log(`WebSocket error: ${err.message || err}`);
+      if (!opened && allowFallback) {
+        fallback();
+      }
+    });
+
+    ws.on('message', (data) => {
+      let payload;
+      try {
+        payload = JSON.parse(data.toString());
+      } catch (err) {
+        log('Invalid JSON from server');
+        return;
+      }
+      handleMessage(payload, (p) => safeSend(ws, p));
+    });
+
+    return { ws };
+  }
+
+  if (transport === 'http') {
+    return runHttpMode();
+  }
+  if (transport === 'auto') {
+    return runWsMode({ allowFallback: true });
+  }
+  return runWsMode({ allowFallback: false });
 }
 
 module.exports = { startLan };
