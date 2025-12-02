@@ -21,7 +21,7 @@ const {
 function buildProxyAgent(proxyUrl, insecure, targetProtocol) {
   if (!proxyUrl) return null;
   const url = new URL(proxyUrl);
-  const opts = { rejectUnauthorized: !insecure };
+  const opts = { rejectUnauthorized: !insecure, keepAlive: true };
   // For HTTPS targets, use HttpsProxyAgent even if the proxy is HTTP to ensure CONNECT is used.
   if (targetProtocol === 'https:') return new HttpsProxyAgent(url, opts);
   return url.protocol === 'http:' ? new HttpProxyAgent(url, opts) : new HttpsProxyAgent(url, opts);
@@ -50,11 +50,11 @@ function startProxy({
   let sendHttp = null;
   let currentTransport = transport;
 
-  function ensureConnected(responder) {
-    if ((currentTransport === 'ws' || currentTransport === 'auto') && ws && ws.readyState !== WebSocket.OPEN) return false;
-    if (currentTransport === 'http') return true;
-    return true;
-  }
+function ensureConnected(responder) {
+  if ((currentTransport === 'ws' || currentTransport === 'auto') && ws && ws.readyState !== WebSocket.OPEN) return false;
+  if (currentTransport === 'http') return true;
+  return true;
+}
 
   function cleanupPendingWithMessage(message) {
     pendingHttp.forEach(({ res, timer }) => {
@@ -258,45 +258,54 @@ function startProxy({
       });
     };
 
-    async function poll() {
-      for (;;) {
-        try {
-          const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`;
-          dlog('HTTP recv', url, 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
-          const res = await fetchHttp(url, {
-            method: 'GET',
-            agent,
-          });
-          dlog('HTTP recv status', res.status, res.statusText);
-          if (res.status === 204) continue;
-          if (!res.ok) {
-            let bodyText = '';
-            try {
-              bodyText = await res.text();
-            } catch (_) {}
-            log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
-            if (shouldResendHello(res.status)) {
-              dlog('Resending hello due to status', res.status);
-              sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
-            }
-            await new Promise((r) => setTimeout(r, 1000));
-            continue;
+    async function pollOnce() {
+      try {
+        const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`;
+        dlog('HTTP recv', url, 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
+        const res = await fetchHttp(url, {
+          method: 'GET',
+          agent,
+        });
+        dlog('HTTP recv status', res.status, res.statusText);
+        if (res.status === 204) return;
+        if (!res.ok) {
+          let bodyText = '';
+          try {
+            bodyText = await res.text();
+          } catch (_) {}
+          log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+          if (shouldResendHello(res.status)) {
+            dlog('Resending hello due to status', res.status);
+            sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
           }
-          const text = await res.text();
-          if (!text) continue;
-          const payload = JSON.parse(text);
-          handleServerMessage(payload, sendHttp);
-        } catch (err) {
-          log(`HTTP poll error: ${err.message || err}`);
-          await new Promise((r) => setTimeout(r, 1000));
+          await new Promise((r) => setTimeout(r, 500));
+          return;
         }
+        const text = await res.text();
+        if (!text) return;
+        const payload = JSON.parse(text);
+        handleServerMessage(payload, sendHttp);
+      } catch (err) {
+        log(`HTTP poll error: ${err.message || err}`);
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
+
+    const parallelPolls = 3;
+    const startPollers = () => {
+      for (let i = 0; i < parallelPolls; i += 1) {
+        (async function loop() {
+          while (true) {
+            await pollOnce();
+          }
+        })();
+      }
+    };
 
     sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
-    poll();
+    startPollers();
     currentTransport = 'http';
     log(`connected via HTTP tunnel to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
     return { server, transport: 'http' };

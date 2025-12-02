@@ -53,15 +53,20 @@ async function performHttpRequest(request) {
 function buildProxyAgent(proxyUrl, insecure, targetProtocol) {
   if (!proxyUrl) return null;
   const url = new URL(proxyUrl);
-  const opts = { rejectUnauthorized: !insecure };
+  const opts = { rejectUnauthorized: !insecure, keepAlive: true };
   // For HTTPS targets, use HttpsProxyAgent even if the proxy is HTTP to ensure CONNECT is used.
   if (targetProtocol === 'https:') return new HttpsProxyAgent(url, opts);
   return url.protocol === 'http:' ? new HttpProxyAgent(url, opts) : new HttpsProxyAgent(url, opts);
 }
 
-function buildDirectAgent(insecure) {
-  if (!insecure) return null;
-  return new https.Agent({ rejectUnauthorized: false });
+function buildDirectAgent(targetProtocol, insecure) {
+  const opts = { keepAlive: true };
+  if (insecure) opts.rejectUnauthorized = false;
+  if (targetProtocol === 'http:') {
+    const http = require('http');
+    return new http.Agent(opts);
+  }
+  return new https.Agent(opts);
 }
 
 async function connectThroughProxy(proxyUrl, targetHost, targetPort, insecure) {
@@ -109,7 +114,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   const targetProtocol = new URL(httpUrl).protocol;
   const proxyAgent = buildProxyAgent(agentUrl, insecure, targetProtocol);
-  const directAgent = buildDirectAgent(insecure);
+  const directAgent = buildDirectAgent(targetProtocol, insecure);
   const fetchAgent = proxyAgent || directAgent;
 
   const tunnels = new Map(); // id -> net.Socket
@@ -210,46 +215,55 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
       });
     }
 
-    async function poll() {
-      for (;;) {
-        try {
-          const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`;
-          dlog('HTTP recv', url, 'curl:', `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
-          const res = await fetchHttp(url, {
-            method: 'GET',
-            agent: fetchAgent,
-          });
-          dlog('HTTP recv status', res.status, res.statusText);
-          if (res.status === 204) continue;
-          if (!res.ok) {
-            let bodyText = '';
-            try {
-              bodyText = await res.text();
-            } catch (_) {}
-            log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
-            if (shouldResendHello(res.status)) {
-              dlog('Resending hello due to status', res.status);
-              sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
-            }
-            await new Promise((r) => setTimeout(r, 1000));
-            continue;
+    async function pollOnce() {
+      try {
+        const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`;
+        dlog('HTTP recv', url, 'curl:', `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
+        const res = await fetchHttp(url, {
+          method: 'GET',
+          agent: fetchAgent,
+        });
+        dlog('HTTP recv status', res.status, res.statusText);
+        if (res.status === 204) return;
+        if (!res.ok) {
+          let bodyText = '';
+          try {
+            bodyText = await res.text();
+          } catch (_) {}
+          log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+          if (shouldResendHello(res.status)) {
+            dlog('Resending hello due to status', res.status);
+            sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
           }
-          const text = await res.text();
-          if (!text) continue;
-          const payload = JSON.parse(text);
-          handleMessage(payload, sendHttp);
-        } catch (err) {
-          log(`HTTP poll error: ${err.message || err}`);
-          await new Promise((r) => setTimeout(r, 1000));
+          await new Promise((r) => setTimeout(r, 500));
+          return;
         }
+        const text = await res.text();
+        if (!text) return;
+        const payload = JSON.parse(text);
+        handleMessage(payload, sendHttp);
+      } catch (err) {
+        log(`HTTP poll error: ${err.message || err}`);
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
+
+    const parallelPolls = 3;
+    const startPollers = () => {
+      for (let i = 0; i < parallelPolls; i += 1) {
+        (async function loop() {
+          while (true) {
+            await pollOnce();
+          }
+        })();
+      }
+    };
 
     sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
     sendFn = sendHttp;
-    poll();
+    startPollers();
     log(`using HTTP tunnel to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     return { transport: 'http' };
   }

@@ -6,8 +6,7 @@ function createChannel() {
   return {
     ws: null,
     queue: [],
-    pendingRes: null,
-    pendingTimer: null,
+    pending: [], // array of {res, timer}
   };
 }
 
@@ -16,12 +15,11 @@ function respondChannel(channel, payload) {
     safeSend(channel.ws, payload);
     return true;
   }
-  if (channel.pendingRes) {
-    channel.pendingRes.writeHead(200, { 'content-type': 'application/json' });
-    channel.pendingRes.end(JSON.stringify(payload));
-    clearTimeout(channel.pendingTimer);
-    channel.pendingRes = null;
-    channel.pendingTimer = null;
+  if (channel.pending.length > 0) {
+    const { res, timer } = channel.pending.shift();
+    clearTimeout(timer);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(payload));
     return true;
   }
   channel.queue.push(payload);
@@ -35,15 +33,15 @@ function drainChannel(channel, res) {
     res.end(JSON.stringify(payload));
     return;
   }
-  channel.pendingRes = res;
-  channel.pendingTimer = setTimeout(() => {
-    if (channel.pendingRes) {
-      channel.pendingRes.writeHead(204);
-      channel.pendingRes.end();
-      channel.pendingRes = null;
-      channel.pendingTimer = null;
+  const timer = setTimeout(() => {
+    const idx = channel.pending.findIndex((p) => p.res === res);
+    if (idx !== -1) {
+      channel.pending.splice(idx, 1);
+      res.writeHead(204);
+      res.end();
     }
   }, 30000);
+  channel.pending.push({ res, timer });
 }
 
 function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
