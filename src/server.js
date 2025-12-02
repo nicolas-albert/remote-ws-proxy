@@ -151,9 +151,7 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
     }
   });
 
-  const io = new Server(server, {
-    transports: ['websocket', 'polling'],
-  });
+  const io = new Server(server);
 
   io.on('connection', (socket) => {
     const { session, role, protocolVersion } = socket.handshake.query || {};

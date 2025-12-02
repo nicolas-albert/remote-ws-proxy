@@ -186,7 +186,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
   }
 
   socket = io(ioUrl, {
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     forceNew: true,
     reconnection: true,
     query: { session: resolvedSession, role: 'lan', protocolVersion: PROTOCOL_VERSION },

@@ -244,7 +244,7 @@ function startProxy({
   });
 
   socket = io(ioUrl, {
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     forceNew: true,
     reconnection: true,
     query: { session: resolvedSession, role: 'proxy', protocolVersion: PROTOCOL_VERSION },
