@@ -53,6 +53,8 @@ function createLogger(scope) {
   };
 }
 
+const PROTOCOL_VERSION = 1;
+
 function createDebugLogger(enabled, scope) {
   const base = createLogger(scope);
   return (...args) => {
@@ -93,6 +95,12 @@ function parseServerTarget(rawUrl, explicitSession) {
   return { wsUrl: new URL(wsUrl, wsUrl).toString(), httpUrl: urlObj.toString(), session };
 }
 
+const PROTOCOL_VERSION = 1;
+
+function shouldResendHello(status) {
+  return status === 404 || status === 410;
+}
+
 module.exports = {
   encodeBody,
   decodeBody,
@@ -104,4 +112,6 @@ module.exports = {
   parseServerTarget,
   toWebSocketUrl,
   toHttpUrl,
+  PROTOCOL_VERSION,
+  shouldResendHello,
 };

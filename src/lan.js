@@ -13,6 +13,8 @@ const {
   createLogger,
   createDebugLogger,
   parseServerTarget,
+  PROTOCOL_VERSION,
+  shouldResendHello,
 } = require('./common');
 
 function normalizeResponseHeaders(headers) {
@@ -225,6 +227,10 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
               bodyText = await res.text();
             } catch (_) {}
             log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+            if (shouldResendHello(res.status)) {
+              dlog('Resending hello due to status', res.status);
+              sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
+            }
             await new Promise((r) => setTimeout(r, 1000));
             continue;
           }
@@ -239,7 +245,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
       }
     }
 
-    sendHttp({ type: 'hello', role: 'lan', session: resolvedSession }).catch((err) =>
+    sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
     sendFn = sendHttp;
@@ -259,7 +265,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
 
     ws.on('open', () => {
       opened = true;
-      safeSend(ws, { type: 'hello', role: 'lan', session: resolvedSession });
+      safeSend(ws, { type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
       log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     });
 

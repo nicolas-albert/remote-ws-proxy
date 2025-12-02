@@ -1,6 +1,6 @@
 const http = require('http');
 const WebSocket = require('ws');
-const { safeSend, createLogger } = require('./common');
+const { safeSend, createLogger, PROTOCOL_VERSION } = require('./common');
 
 function createChannel() {
   return {
@@ -100,6 +100,9 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
     if (role !== 'lan' && role !== 'proxy') {
       return { error: 'Invalid role' };
     }
+    if (sender.protocolVersion && sender.protocolVersion !== PROTOCOL_VERSION) {
+      return { error: `Protocol mismatch (server ${PROTOCOL_VERSION}, client ${sender.protocolVersion})` };
+    }
     const channel = state[role];
     if (sender.ws) {
       if (channel.ws && channel.ws !== sender.ws) {
@@ -109,7 +112,7 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
       }
       channel.ws = sender.ws;
     }
-    respondChannel(channel, { type: 'hello-ack', role, session: sessionName });
+    respondChannel(channel, { type: 'hello-ack', role, session: sessionName, protocolVersion: PROTOCOL_VERSION });
     log(`${role.toUpperCase()} registered for session ${sessionName} via ${sender.ws ? 'ws' : 'http'}`);
     return {};
   }
@@ -186,7 +189,7 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
         return;
       }
       connectionMeta.set(ws, { session, role });
-      handleHello(session, role, { ws });
+      handleHello(session, role, { ws, protocolVersion: payload.protocolVersion });
       return;
     }
     const meta = connectionMeta.get(ws);

@@ -14,6 +14,8 @@ const {
   createLogger,
   createDebugLogger,
   parseServerTarget,
+  PROTOCOL_VERSION,
+  shouldResendHello,
 } = require('./common');
 
 function buildProxyAgent(proxyUrl, insecure, targetProtocol) {
@@ -273,6 +275,10 @@ function startProxy({
               bodyText = await res.text();
             } catch (_) {}
             log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+            if (shouldResendHello(res.status)) {
+              dlog('Resending hello due to status', res.status);
+              sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
+            }
             await new Promise((r) => setTimeout(r, 1000));
             continue;
           }
@@ -287,7 +293,7 @@ function startProxy({
       }
     }
 
-    sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession }).catch((err) =>
+    sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
     poll();
@@ -306,7 +312,7 @@ function startProxy({
 
     ws.on('open', () => {
       opened = true;
-      safeSend(ws, { type: 'hello', role: 'proxy', session: resolvedSession });
+      safeSend(ws, { type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
       log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     });
 
