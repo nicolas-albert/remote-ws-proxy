@@ -53,8 +53,6 @@ function createLogger(scope) {
   };
 }
 
-const PROTOCOL_VERSION = 1;
-
 function createDebugLogger(enabled, scope) {
   const base = createLogger(scope);
   return (...args) => {
