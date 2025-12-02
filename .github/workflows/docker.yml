@@ -11,10 +11,16 @@ jobs:
     env:
       DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
       DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-    if: ${{ env.DH_USER != '' && env.DH_TOKEN != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Check secrets
+        run: |
+          if [ -z "${DH_USER}" ] || [ -z "${DH_TOKEN}" ]; then
+            echo "DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets are required"
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
