@@ -1,5 +1,3 @@
-const WebSocket = require('ws');
-
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'proxy-connection',
@@ -20,11 +18,6 @@ function encodeBody(buffer) {
 function decodeBody(base64) {
   if (!base64) return Buffer.alloc(0);
   return Buffer.from(base64, 'base64');
-}
-
-function safeSend(ws, payload) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify(payload));
 }
 
 function sanitizeHeaders(headers = {}) {
@@ -102,7 +95,6 @@ function shouldResendHello(status) {
 module.exports = {
   encodeBody,
   decodeBody,
-  safeSend,
   sanitizeHeaders,
   collectRequestBody,
   createLogger,

@@ -1,7 +1,7 @@
 {
   "name": "remote-ws-proxy",
-  "version": "0.5.11",
-  "description": "Remote HTTP proxy over WebSocket with server, LAN agent, and local proxy CLI.",
+  "version": "0.6.0",
+  "description": "Remote HTTP proxy over Socket.IO with server, LAN agent, and local proxy CLI.",
   "main": "src/server.js",
   "bin": {
     "rwp": "./bin/rwp.js",
@@ -36,7 +36,7 @@
     "commander": "^14.0.2",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
-    "node-fetch": "^2.7.0",
-    "ws": "^8.18.3"
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
   }
 }

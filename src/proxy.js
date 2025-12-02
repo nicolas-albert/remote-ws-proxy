@@ -1,29 +1,24 @@
 const http = require('http');
 const net = require('net');
 const { randomUUID } = require('crypto');
-const WebSocket = require('ws');
+const { io } = require('socket.io-client');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
-const fetchHttp = require('node-fetch');
 const {
   encodeBody,
   decodeBody,
   collectRequestBody,
   sanitizeHeaders,
-  safeSend,
   createLogger,
   createDebugLogger,
   parseServerTarget,
   PROTOCOL_VERSION,
-  shouldResendHello,
 } = require('./common');
 
-function buildProxyAgent(proxyUrl, insecure, targetProtocol) {
+function buildProxyAgent(proxyUrl, insecure) {
   if (!proxyUrl) return null;
   const url = new URL(proxyUrl);
   const opts = { rejectUnauthorized: !insecure, keepAlive: true };
-  // For HTTPS targets, use HttpsProxyAgent even if the proxy is HTTP to ensure CONNECT is used.
-  if (targetProtocol === 'https:') return new HttpsProxyAgent(url, opts);
   return url.protocol === 'http:' ? new HttpProxyAgent(url, opts) : new HttpsProxyAgent(url, opts);
 }
 
@@ -34,30 +29,39 @@ function startProxy({
   host = '127.0.0.1',
   proxyUrl,
   insecure = false,
-  transport = 'ws',
+  transport,
   debug = false,
 }) {
   if (insecure && !process.env.NODE_TLS_REJECT_UNAUTHORIZED) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   }
-  const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
+
+  const { httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
+  const base = new URL(httpUrl);
+  const ioUrl = base.origin;
+
   const log = createLogger(`proxy:${resolvedSession}`);
   const dlog = createDebugLogger(debug, `proxy:${resolvedSession}:debug`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  const targetProtocol = new URL(httpUrl).protocol;
-  const agent = buildProxyAgent(agentUrl, insecure, targetProtocol);
-  const pendingHttp = new Map(); // id -> {res, timer}
-  const tunnels = new Map(); // id -> {clientSocket, acked, queue}
-  let ws;
-  let sendToServer = () => {};
-  let sendHttp = null;
-  let currentTransport = transport;
+  const agent = buildProxyAgent(agentUrl, insecure);
 
-function ensureConnected(responder) {
-  if ((currentTransport === 'ws' || currentTransport === 'auto') && ws && ws.readyState !== WebSocket.OPEN) return false;
-  if (currentTransport === 'http') return true;
-  return true;
-}
+  const pendingHttp = new Map(); // id -> {res, timer}
+  const tunnels = new Map(); // id -> {clientSocket, acked, queue, head}
+  const outbox = [];
+  let socket;
+
+  function sendToServer(message) {
+    if (socket && socket.connected) {
+      socket.emit('msg', message);
+    } else {
+      outbox.push(message);
+    }
+  }
+
+  function flush() {
+    if (!socket || !socket.connected) return;
+    while (outbox.length) socket.emit('msg', outbox.shift());
+  }
 
   function cleanupPendingWithMessage(message) {
     pendingHttp.forEach(({ res, timer }) => {
@@ -79,7 +83,7 @@ function ensureConnected(responder) {
     tunnels.clear();
   }
 
-  function handleServerMessage(payload, sendFn) {
+  function handleServerMessage(payload) {
     switch (payload.type) {
       case 'hello-ack':
         return;
@@ -110,18 +114,20 @@ function ensureConnected(responder) {
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         tunnel.acked = true;
         if (head && head.length) {
-          sendFn({ type: 'connect-data', id: payload.id, dataBase64: encodeBody(head) });
+          sendToServer({ type: 'connect-data', id: payload.id, dataBase64: encodeBody(head) });
         }
         while (queue.length) {
           const chunk = queue.shift();
-          sendFn({ type: 'connect-data', id: payload.id, dataBase64: encodeBody(chunk) });
+          sendToServer({ type: 'connect-data', id: payload.id, dataBase64: encodeBody(chunk) });
         }
         break;
       }
       case 'connect-error': {
         const tunnel = tunnels.get(payload.id);
         if (tunnel) {
-          tunnel.clientSocket.write(`HTTP/1.1 502 Bad Gateway\r\nContent-Length: ${payload.message?.length || 0}\r\n\r\n${payload.message || ''}`);
+          tunnel.clientSocket.write(
+            `HTTP/1.1 502 Bad Gateway\r\nContent-Length: ${payload.message?.length || 0}\r\n\r\n${payload.message || ''}`,
+          );
           tunnel.clientSocket.end();
           tunnels.delete(payload.id);
         }
@@ -148,9 +154,9 @@ function ensureConnected(responder) {
   }
 
   async function handleHttpRequest(req, res) {
-    if (!ensureConnected()) {
+    if (!socket || !socket.connected) {
       res.writeHead(503, { 'content-type': 'text/plain' });
-      res.end('WebSocket not connected');
+      res.end('Server not connected');
       return;
     }
     const id = randomUUID();
@@ -165,7 +171,6 @@ function ensureConnected(responder) {
 
     const headers = sanitizeHeaders(req.headers);
 
-    // Build absolute URL if the client sent only a path (some proxy clients do that for ping checks)
     let targetUrl = req.url;
     if (!/^https?:\/\//i.test(targetUrl)) {
       const hostHeader = req.headers.host;
@@ -180,7 +185,7 @@ function ensureConnected(responder) {
     const payload = {
       type: 'http-request',
       id,
-      session,
+      session: resolvedSession,
       request: {
         method: req.method,
         url: targetUrl,
@@ -201,7 +206,7 @@ function ensureConnected(responder) {
   }
 
   function handleConnect(req, clientSocket, head) {
-    if (!ensureConnected()) {
+    if (!socket || !socket.connected) {
       clientSocket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
       clientSocket.destroy();
       return;
@@ -210,7 +215,7 @@ function ensureConnected(responder) {
     const id = randomUUID();
     const tunnel = { clientSocket, acked: false, queue: [], head };
     tunnels.set(id, tunnel);
-    sendToServer({ type: 'connect-start', id, session, host, port });
+    sendToServer({ type: 'connect-start', id, session: resolvedSession, host, port });
 
     clientSocket.on('data', (chunk) => {
       if (!tunnel.acked) {
@@ -238,164 +243,38 @@ function ensureConnected(responder) {
     log(`HTTP proxy listening on http://${host}:${port}`);
   });
 
-  sendToServer = (msg) => {
-    if ((currentTransport === 'http' || currentTransport === 'auto') && sendHttp) {
-      return sendHttp(msg);
-    }
-    if (ws) safeSend(ws, msg);
-  };
+  socket = io(ioUrl, {
+    transports: ['websocket', 'polling'],
+    forceNew: true,
+    reconnection: true,
+    query: { session: resolvedSession, role: 'proxy', protocolVersion: PROTOCOL_VERSION },
+    transportOptions: {
+      polling: { agent, rejectUnauthorized: !insecure },
+      websocket: { agent, rejectUnauthorized: !insecure },
+    },
+  });
 
-  function runHttpMode() {
-    const httpBase = new URL(httpUrl);
-    const baseHttp = httpBase.origin; // server root (no session path)
-    const outbox = [];
-    const idleDelayMs = 200;
-    const BATCH_TIME_MS = 15;
-    const BATCH_BYTES = 32 * 1024;
-    const BATCH_COUNT = 64;
+  socket.on('connect', () => {
+    log(`connected to server ${ioUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    flush();
+  });
 
-    sendHttp = (message) => outbox.push(message);
+  socket.on('msg', (payload) => handleServerMessage(payload));
 
-    async function startStream() {
-      while (true) {
-        try {
-          const url = `${baseHttp}/api/stream/${encodeURIComponent(resolvedSession)}?role=proxy`;
-          dlog('HTTP stream', url);
-          const res = await fetchHttp(url, { method: 'GET', agent });
-          if (!res.ok) {
-            log(`HTTP stream failed: ${res.status}`);
-            await new Promise((r) => setTimeout(r, 500));
-            continue;
-          }
-          let buffer = '';
-          for await (const chunk of res.body) {
-            buffer += chunk.toString();
-            let idx;
-            while ((idx = buffer.indexOf('\n')) !== -1) {
-              const line = buffer.slice(0, idx).trim();
-              buffer = buffer.slice(idx + 1);
-              if (!line) continue;
-              try {
-                const payload = JSON.parse(line);
-                const items = Array.isArray(payload) ? payload : [payload];
-                for (const item of items) handleServerMessage(item, (msg) => outbox.push(msg));
-              } catch (err) {
-                log(`Stream parse error: ${err.message || err}`);
-              }
-            }
-          }
-        } catch (err) {
-          log(`HTTP stream error: ${err.message || err}`);
-          await new Promise((r) => setTimeout(r, 500));
-        }
-      }
-    }
+  socket.on('disconnect', () => {
+    log('server connection closed');
+    cleanupPendingWithMessage('Server connection closed');
+  });
 
-    async function loop() {
-      while (true) {
-        const batch = (() => {
-          if (!outbox.length) return null;
-          const first = outbox.shift();
-          const b = [first];
-          let size = Buffer.byteLength(JSON.stringify(first));
-          const start = Date.now();
-          while (outbox.length && b.length < BATCH_COUNT && Date.now() - start < BATCH_TIME_MS) {
-            const next = outbox[0];
-            const nextSize = Buffer.byteLength(JSON.stringify(next));
-            if (size + nextSize > BATCH_BYTES) break;
-            b.push(outbox.shift());
-            size += nextSize;
-          }
-          return b;
-        })();
-        if (!batch) {
-          await new Promise((r) => setTimeout(r, idleDelayMs));
-          continue;
-        }
-        const body = { role: 'proxy', message: batch.length === 1 ? batch[0] : batch };
-        try {
-          const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=proxy`;
-          dlog('HTTP send', url, batch.length === 1 ? JSON.stringify(body.message) : `batch x${batch.length}`);
-          const res = await fetchHttp(url, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-            agent,
-          });
-          if (!res.ok) {
-            log(`HTTP send failed: ${res.status} ${res.statusText || ''}`.trim());
-          }
-        } catch (err) {
-          log(`HTTP send error: ${err.message || err}`);
-          while (batch.length) outbox.unshift(batch.pop());
-          await new Promise((r) => setTimeout(r, 500));
-        }
-      }
-    }
+  socket.on('error', (err) => {
+    log(`socket error: ${err.message || err}`);
+  });
 
-    outbox.push({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
-    currentTransport = 'http';
-    loop();
-    startStream();
-    log(`connected via HTTP stream/send to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
-    return { server, transport: 'http' };
+  if (transport && transport !== 'io') {
+    log(`ignoring transport=${transport}, socket.io is now the only transport`);
   }
 
-  function runWsMode({ allowFallback } = {}) {
-    const wsOptions = {};
-    if (agent) wsOptions.agent = agent;
-    if (insecure) wsOptions.rejectUnauthorized = false;
-    ws = new WebSocket(wsUrl, wsOptions);
-    let opened = false;
-    currentTransport = 'ws';
-
-    ws.on('open', () => {
-      opened = true;
-      safeSend(ws, { type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
-      log(`connected to server ${wsUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
-    });
-
-    const fallback = () => {
-      if (!allowFallback) return;
-      log('WebSocket failed, falling back to HTTP transport');
-      ws.removeAllListeners();
-      try {
-        ws.close();
-      } catch (_) {}
-      runHttpMode();
-    };
-
-    ws.on('close', () => {
-      log('server connection closed');
-      cleanupPendingWithMessage('Server connection closed');
-      if (!opened && allowFallback) fallback();
-    });
-
-    ws.on('error', (err) => {
-      log(`WebSocket error: ${err.message || err}`);
-      if (!opened && allowFallback) fallback();
-    });
-
-    ws.on('message', (data) => {
-      let payload;
-      try {
-        payload = JSON.parse(data.toString());
-      } catch (err) {
-        log('Invalid JSON from server');
-        return;
-      }
-      handleServerMessage(payload, (p) => safeSend(ws, p));
-    });
-    return { ws, server };
-  }
-
-  if (transport === 'http') {
-    return runHttpMode();
-  }
-  if (transport === 'auto') {
-    return runWsMode({ allowFallback: true });
-  }
-  return runWsMode({ allowFallback: false });
+  return { socket, server };
 }
 
 module.exports = { startProxy };

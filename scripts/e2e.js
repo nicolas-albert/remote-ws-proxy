@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 const { spawn } = require('child_process');
 
-const scenarios = [
-  { name: 'lan-ws_proxy-ws', lanTransport: 'ws', proxyTransport: 'ws' },
-  { name: 'lan-http_proxy-ws', lanTransport: 'http', proxyTransport: 'ws' },
-  { name: 'lan-ws_proxy-http', lanTransport: 'ws', proxyTransport: 'http' },
-  { name: 'lan-http_proxy-http', lanTransport: 'http', proxyTransport: 'http' },
-];
+const scenarios = [{ name: 'socket-io', lanTransport: 'io', proxyTransport: 'io' }];
 
 const targets = [
   { name: 'ifconfig.io', url: 'https://ifconfig.io' },
@@ -48,7 +43,7 @@ async function runScenario(idx, scenario) {
   const serverPort = basePort;
   const proxyPort = basePort + 1;
   const session = `test-${idx + 1}`;
-  const serverUrl = `ws://127.0.0.1:${serverPort}`;
+  const serverUrl = `http://127.0.0.1:${serverPort}`;
 
   const procs = [];
   try {
@@ -77,38 +72,13 @@ async function runScenario(idx, scenario) {
     }
 
     // lan
-    const lanArgs = [
-      'bin/rwp.js',
-      'lan',
-      '--transport',
-      scenario.lanTransport,
-      session,
-      serverUrl,
-      '--debug',
-    ];
-    if (scenario.lanTransport === 'http') {
-      lanArgs.push('--insecure');
-    }
+    const lanArgs = ['bin/rwp.js', 'lan', session, serverUrl];
     const lan = startProc('node', lanArgs);
     procs.push(lan);
     await delay(1000);
 
     // proxy
-    const proxyArgs = [
-      'bin/rwp.js',
-      'proxy',
-      '--transport',
-      scenario.proxyTransport,
-      session,
-      serverUrl,
-      `${proxyPort}`,
-      '--host',
-      '127.0.0.1',
-      '--debug',
-    ];
-    if (scenario.proxyTransport === 'http') {
-      proxyArgs.push('--insecure');
-    }
+    const proxyArgs = ['bin/rwp.js', 'proxy', session, serverUrl, `${proxyPort}`, '--host', '127.0.0.1'];
     const prx = startProc('node', proxyArgs);
     procs.push(prx);
     await delay(1500);
