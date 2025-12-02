@@ -245,29 +245,31 @@ function ensureConnected(responder) {
   function runHttpMode() {
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
+    const outbox = [];
 
-    sendHttp = async function (message) {
-      const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
-      const body = JSON.stringify({ role: 'proxy', message });
-      dlog('HTTP send', url, body.slice(0, 200), 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${body}' ${url}`);
-      await fetchHttp(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-        agent,
-      });
+    sendHttp = (message) => {
+      outbox.push(message);
     };
 
-    async function pollOnce() {
+    async function loop() {
       try {
-        const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=proxy`;
-        dlog('HTTP recv', url, 'curl:', `curl -k${agent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
+        const next = outbox.shift();
+        const body = next ? { role: 'proxy', message: next } : {};
+        const url = `${baseHttp}/api/longpoll/${encodeURIComponent(resolvedSession)}?role=proxy`;
+        dlog(
+          'HTTP longpoll',
+          url,
+          next ? JSON.stringify(next).slice(0, 200) : '',
+          'curl:',
+          `curl -k${agent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${JSON.stringify(body)}' ${url}`
+        );
         const res = await fetchHttp(url, {
-          method: 'GET',
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
           agent,
         });
         dlog('HTTP recv status', res.status, res.statusText);
-        if (res.status === 204) return;
         if (!res.ok) {
           let bodyText = '';
           try {
@@ -276,33 +278,34 @@ function ensureConnected(responder) {
           log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
           if (shouldResendHello(res.status)) {
             dlog('Resending hello due to status', res.status);
-            sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
+            outbox.push({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
           }
-          await new Promise((r) => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 200));
           return;
         }
-        const text = await res.text();
-        if (!text) return;
-        const payload = JSON.parse(text);
-        handleServerMessage(payload, sendHttp);
+        if (res.status === 200) {
+          const text = await res.text();
+          if (text) {
+            try {
+              const payload = JSON.parse(text);
+              handleServerMessage(payload, (msg) => outbox.push(msg));
+            } catch (err) {
+              log(`Failed to parse payload: ${err.message || err}`);
+            }
+          }
+        }
       } catch (err) {
         log(`HTTP poll error: ${err.message || err}`);
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 200));
+      } finally {
+        setImmediate(loop);
       }
     }
 
-    async function startPoller() {
-      for (;;) {
-        await pollOnce();
-      }
-    }
-
-    sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
-      log(`Hello failed: ${err.message || err}`)
-    );
-    startPoller();
+    outbox.push({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
     currentTransport = 'http';
-    log(`connected via HTTP tunnel to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
+    loop();
+    log(`connected via HTTP longpoll to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
     return { server, transport: 'http' };
   }
 

@@ -202,29 +202,31 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
   function runHttpMode() {
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
+    const outbox = [];
 
-    async function sendHttp(message) {
-      const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/send`;
-      const body = JSON.stringify({ role: 'lan', message });
-      dlog('HTTP send', url, body.slice(0, 200), 'curl:', `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${body}' ${url}`);
-      await fetchHttp(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-        agent: fetchAgent,
-      });
-    }
+    sendFn = (message) => {
+      outbox.push(message);
+    };
 
-    async function pollOnce() {
+    async function loop() {
       try {
-        const url = `${baseHttp}/api/tunnel/${encodeURIComponent(resolvedSession)}/recv?role=lan`;
-        dlog('HTTP recv', url, 'curl:', `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -i ${url}`);
+        const next = outbox.shift();
+        const body = next ? { role: 'lan', message: next } : {};
+        const url = `${baseHttp}/api/longpoll/${encodeURIComponent(resolvedSession)}?role=lan`;
+        dlog(
+          'HTTP longpoll',
+          url,
+          next ? JSON.stringify(next).slice(0, 200) : '',
+          'curl:',
+          `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${JSON.stringify(body)}' ${url}`
+        );
         const res = await fetchHttp(url, {
-          method: 'GET',
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
           agent: fetchAgent,
         });
         dlog('HTTP recv status', res.status, res.statusText);
-        if (res.status === 204) return;
         if (!res.ok) {
           let bodyText = '';
           try {
@@ -233,33 +235,33 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
           log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
           if (shouldResendHello(res.status)) {
             dlog('Resending hello due to status', res.status);
-            sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch(() => {});
+            outbox.push({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
           }
-          await new Promise((r) => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 200));
           return;
         }
-        const text = await res.text();
-        if (!text) return;
-        const payload = JSON.parse(text);
-        handleMessage(payload, sendHttp);
+        if (res.status === 200) {
+          const text = await res.text();
+          if (text) {
+            try {
+              const payload = JSON.parse(text);
+              handleMessage(payload, (msg) => outbox.push(msg));
+            } catch (err) {
+              log(`Failed to parse payload: ${err.message || err}`);
+            }
+          }
+        }
       } catch (err) {
         log(`HTTP poll error: ${err.message || err}`);
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 200));
+      } finally {
+        setImmediate(loop);
       }
     }
 
-    async function startPoller() {
-      for (;;) {
-        await pollOnce();
-      }
-    }
-
-    sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
-      log(`Hello failed: ${err.message || err}`)
-    );
-    sendFn = sendHttp;
-    startPoller();
-    log(`using HTTP tunnel to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    outbox.push({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
+    loop();
+    log(`using HTTP longpoll to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     return { transport: 'http' };
   }
 

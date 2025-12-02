@@ -15,7 +15,7 @@ function respondChannel(channel, payload) {
     safeSend(channel.ws, payload);
     return true;
   }
-  if (channel.pending.length > 0) {
+   if (channel.pending.length > 0) {
     const { res, timer } = channel.pending.shift();
     clearTimeout(timer);
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -162,7 +162,7 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
 
   function handlePayload(sessionName, role, payload) {
     if (payload.type === 'hello') {
-      return handleHello(sessionName, payload.role || role, { ws: null });
+      return handleHello(sessionName, payload.role || role, { ws: null, protocolVersion: payload.protocolVersion });
     }
     if (role === 'proxy') {
       routeFromProxy(sessionName, payload);
@@ -210,25 +210,16 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
       return;
     }
 
-    const matchRecv = url.pathname.match(/^\/api\/tunnel\/([^/]+)\/recv$/);
-    const matchSend = url.pathname.match(/^\/api\/tunnel\/([^/]+)\/send$/);
+    const matchLp = url.pathname.match(/^\/api\/longpoll\/([^/]+)$/);
 
-    if (matchRecv && req.method === 'GET') {
-      const sessionName = decodeURIComponent(matchRecv[1]);
+    if (matchLp && req.method === 'POST') {
+      const sessionName = decodeURIComponent(matchLp[1]);
       const role = url.searchParams.get('role');
       if (role !== 'lan' && role !== 'proxy') {
         res.writeHead(400, { 'content-type': 'text/plain' });
         res.end('Invalid role');
         return;
       }
-      const state = getSession(sessionName);
-      const channel = state[role];
-      drainChannel(channel, res);
-      return;
-    }
-
-    if (matchSend && req.method === 'POST') {
-      const sessionName = decodeURIComponent(matchSend[1]);
       const chunks = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
@@ -236,24 +227,28 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
         try {
           payload = JSON.parse(Buffer.concat(chunks).toString() || '{}');
         } catch (_) {
-          res.writeHead(400, { 'content-type': 'text/plain' });
-          res.end('Invalid JSON');
+          payload = {};
+        }
+        if (payload.message && typeof payload.message === 'object') {
+          handlePayload(sessionName, role, payload.message);
+        }
+        const state = getSession(sessionName);
+        const channel = state[role];
+        if (channel.queue.length > 0) {
+          const msg = channel.queue.shift();
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(msg));
           return;
         }
-        const { role, message } = payload;
-        if (role !== 'lan' && role !== 'proxy') {
-          res.writeHead(400, { 'content-type': 'text/plain' });
-          res.end('Invalid role');
-          return;
-        }
-        if (!message || typeof message !== 'object') {
-          res.writeHead(400, { 'content-type': 'text/plain' });
-          res.end('Missing message');
-          return;
-        }
-        const result = handlePayload(sessionName, role, message);
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(result));
+        const timer = setTimeout(() => {
+          const idx = channel.pending.findIndex((p) => p.res === res);
+          if (idx !== -1) {
+            channel.pending.splice(idx, 1);
+            res.writeHead(204);
+            res.end();
+          }
+        }, 30000);
+        channel.pending.push({ res, timer });
       });
       req.on('error', () => {
         res.writeHead(500);
