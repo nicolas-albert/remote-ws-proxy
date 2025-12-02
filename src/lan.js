@@ -207,6 +207,9 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     const baseHttp = httpBase.origin; // server root (no session path)
     const outbox = [];
     sendFn = (message) => outbox.push(message);
+    const BATCH_TIME_MS = 15;
+    const BATCH_BYTES = 32 * 1024;
+    const BATCH_COUNT = 64;
 
     async function startStream() {
       while (true) {
@@ -246,17 +249,33 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
 
     const idleDelayMs = 200;
 
+    function buildBatch() {
+      if (!outbox.length) return null;
+      const first = outbox.shift();
+      const batch = [first];
+      let size = Buffer.byteLength(JSON.stringify(first));
+      const start = Date.now();
+      while (outbox.length && batch.length < BATCH_COUNT && Date.now() - start < BATCH_TIME_MS) {
+        const next = outbox[0];
+        const nextSize = Buffer.byteLength(JSON.stringify(next));
+        if (size + nextSize > BATCH_BYTES) break;
+        batch.push(outbox.shift());
+        size += nextSize;
+      }
+      return batch;
+    }
+
     async function loop() {
       while (true) {
-        const next = outbox.shift();
-        if (!next) {
+        const batch = buildBatch();
+        if (!batch) {
           await new Promise((r) => setTimeout(r, idleDelayMs));
           continue;
         }
-        const body = { role: 'lan', message: next };
+        const body = { role: 'lan', message: batch.length === 1 ? batch[0] : batch };
         try {
           const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=lan`;
-          dlog('HTTP send', url, JSON.stringify(body.message || body));
+          dlog('HTTP send', url, batch.length === 1 ? JSON.stringify(body.message) : `batch x${batch.length}`);
           const res = await fetchHttp(url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -268,7 +287,8 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
           }
         } catch (err) {
           log(`HTTP send error: ${err.message || err}`);
-          outbox.unshift(next);
+          // push back the batch to retry
+          while (batch.length) outbox.unshift(batch.pop());
           await new Promise((r) => setTimeout(r, 500));
         }
       }

@@ -250,6 +250,9 @@ function ensureConnected(responder) {
     const baseHttp = httpBase.origin; // server root (no session path)
     const outbox = [];
     const idleDelayMs = 200;
+    const BATCH_TIME_MS = 15;
+    const BATCH_BYTES = 32 * 1024;
+    const BATCH_COUNT = 64;
 
     sendHttp = (message) => outbox.push(message);
 
@@ -290,16 +293,29 @@ function ensureConnected(responder) {
 
     async function loop() {
       while (true) {
-        let next = outbox.shift();
-        if (!next) {
+        const batch = (() => {
+          if (!outbox.length) return null;
+          const first = outbox.shift();
+          const b = [first];
+          let size = Buffer.byteLength(JSON.stringify(first));
+          const start = Date.now();
+          while (outbox.length && b.length < BATCH_COUNT && Date.now() - start < BATCH_TIME_MS) {
+            const next = outbox[0];
+            const nextSize = Buffer.byteLength(JSON.stringify(next));
+            if (size + nextSize > BATCH_BYTES) break;
+            b.push(outbox.shift());
+            size += nextSize;
+          }
+          return b;
+        })();
+        if (!batch) {
           await new Promise((r) => setTimeout(r, idleDelayMs));
-          next = outbox.shift();
-          if (!next) continue;
+          continue;
         }
-        const body = { role: 'proxy', message: next };
+        const body = { role: 'proxy', message: batch.length === 1 ? batch[0] : batch };
         try {
           const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=proxy`;
-          dlog('HTTP send', url, JSON.stringify(body.message || body));
+          dlog('HTTP send', url, batch.length === 1 ? JSON.stringify(body.message) : `batch x${batch.length}`);
           const res = await fetchHttp(url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -311,7 +327,7 @@ function ensureConnected(responder) {
           }
         } catch (err) {
           log(`HTTP send error: ${err.message || err}`);
-          outbox.unshift(next);
+          while (batch.length) outbox.unshift(batch.pop());
           await new Promise((r) => setTimeout(r, 500));
         }
       }

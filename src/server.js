@@ -252,9 +252,13 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
         } catch (_) {
           payload = {};
         }
-        if (payload.message && typeof payload.message === 'object') {
-          handlePayload(sessionName, role, payload.message);
+        const messages = [];
+        if (Array.isArray(payload.message)) {
+          messages.push(...payload.message);
+        } else if (payload.message && typeof payload.message === 'object') {
+          messages.push(payload.message);
         }
+        messages.forEach((msg) => handlePayload(sessionName, role, msg));
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end('{}');
       });

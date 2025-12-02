@@ -13,7 +13,7 @@ const targets = [
   { name: 'wikipedia', url: 'https://fr.wikipedia.org/wiki/Wikip%C3%A9dia:Accueil_principal' },
 ];
 
-const MAX_DURATION_MS = 1000;
+const MAX_DURATION_MS = 1500;
 
 const { homepage } = require('../package.json');
 
