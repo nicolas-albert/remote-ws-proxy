@@ -1,6 +1,7 @@
 const http = require('http');
 const WebSocket = require('ws');
 const { safeSend, createLogger, PROTOCOL_VERSION } = require('./common');
+const { homepage } = require('../package.json');
 
 function createChannel() {
   return {
@@ -264,8 +265,18 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
       return;
     }
 
-    res.writeHead(404, { 'content-type': 'text/plain' });
-    res.end('Not found');
+    if (url.pathname.startsWith('/api/')) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
+    if (homepage) {
+      res.writeHead(302, { Location: homepage });
+      res.end();
+    } else {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('Not found');
+    }
   });
 
   const wss = new WebSocket.Server({ server });
