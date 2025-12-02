@@ -6,20 +6,17 @@ function createChannel() {
   return {
     ws: null,
     queue: [],
-    pending: [], // array of {res, timer}
+    streams: [], // array of res (chunked)
   };
 }
 
-function flushPending(channel) {
-  if (channel.pending.length === 0) return false;
-  if (channel.queue.length === 0) return false;
-  const { res, timer } = channel.pending.shift();
-  clearTimeout(timer);
-  const payload =
-    channel.queue.length === 1 ? channel.queue.shift() : channel.queue.splice(0, channel.queue.length);
-  res.writeHead(200, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(payload));
-  return true;
+function writeStream(res, payload) {
+  try {
+    res.write(`${JSON.stringify(payload)}\n`);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function respondChannel(channel, payload) {
@@ -27,28 +24,20 @@ function respondChannel(channel, payload) {
     safeSend(channel.ws, payload);
     return true;
   }
+  if (channel.streams.length > 0) {
+    const res = channel.streams[0];
+    if (writeStream(res, payload)) return true;
+  }
   channel.queue.push(payload);
-  flushPending(channel);
   return false;
 }
 
-function drainChannel(channel, res) {
-  if (channel.queue.length > 0) {
-    const payload =
-      channel.queue.length === 1 ? channel.queue.shift() : channel.queue.splice(0, channel.queue.length);
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(payload));
-    return;
+function drainQueueToStream(channel, res) {
+  if (channel.queue.length === 0) return;
+  while (channel.queue.length > 0) {
+    const payload = channel.queue.shift();
+    if (!writeStream(res, payload)) break;
   }
-  const timer = setTimeout(() => {
-    const idx = channel.pending.findIndex((p) => p.res === res);
-    if (idx !== -1) {
-      channel.pending.splice(idx, 1);
-      res.writeHead(204);
-      res.end();
-    }
-  }, 30000);
-  channel.pending.push({ res, timer });
 }
 
 function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
@@ -217,10 +206,36 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
       return;
     }
 
-    const matchLp = url.pathname.match(/^\/api\/longpoll\/([^/]+)$/);
+    const matchStream = url.pathname.match(/^\/api\/stream\/([^/]+)$/);
+    const matchSend = url.pathname.match(/^\/api\/send\/([^/]+)$/);
 
-    if (matchLp && req.method === 'POST') {
-      const sessionName = decodeURIComponent(matchLp[1]);
+    if (matchStream && req.method === 'GET') {
+      const sessionName = decodeURIComponent(matchStream[1]);
+      const role = url.searchParams.get('role');
+      if (role !== 'lan' && role !== 'proxy') {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('Invalid role');
+        return;
+      }
+      const state = getSession(sessionName);
+      const channel = state[role];
+      res.writeHead(200, {
+        'content-type': 'application/x-ndjson',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'transfer-encoding': 'chunked',
+      });
+      channel.streams.push(res);
+      drainQueueToStream(channel, res);
+      req.on('close', () => {
+        const idx = channel.streams.indexOf(res);
+        if (idx !== -1) channel.streams.splice(idx, 1);
+      });
+      return;
+    }
+
+    if (matchSend && req.method === 'POST') {
+      const sessionName = decodeURIComponent(matchSend[1]);
       const role = url.searchParams.get('role');
       if (role !== 'lan' && role !== 'proxy') {
         res.writeHead(400, { 'content-type': 'text/plain' });
@@ -239,24 +254,8 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
         if (payload.message && typeof payload.message === 'object') {
           handlePayload(sessionName, role, payload.message);
         }
-        const state = getSession(sessionName);
-        const channel = state[role];
-        if (channel.queue.length > 0) {
-          const payload =
-            channel.queue.length === 1 ? channel.queue.shift() : channel.queue.splice(0, channel.queue.length);
-          res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify(payload));
-          return;
-        }
-        const timer = setTimeout(() => {
-          const idx = channel.pending.findIndex((p) => p.res === res);
-          if (idx !== -1) {
-            channel.pending.splice(idx, 1);
-            res.writeHead(204);
-            res.end();
-          }
-        }, 30000);
-        channel.pending.push({ res, timer });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
       });
       req.on('error', () => {
         res.writeHead(500);

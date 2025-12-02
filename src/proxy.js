@@ -246,18 +246,56 @@ function ensureConnected(responder) {
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
     const outbox = [];
+    let streamAbort = null;
 
     sendHttp = (message) => {
       outbox.push(message);
     };
 
+    async function startStream() {
+      while (true) {
+        try {
+          const controller = new AbortController();
+          streamAbort = () => controller.abort();
+          const url = `${baseHttp}/api/stream/${encodeURIComponent(resolvedSession)}?role=proxy`;
+          dlog('HTTP stream', url);
+          const res = await fetchHttp(url, { method: 'GET', agent, signal: controller.signal });
+          if (!res.ok) {
+            log(`HTTP stream failed: ${res.status}`);
+            await new Promise((r) => setTimeout(r, 500));
+            continue;
+          }
+          let buffer = '';
+          for await (const chunk of res.body) {
+            buffer += chunk.toString();
+            let idx;
+            while ((idx = buffer.indexOf('\n')) !== -1) {
+              const line = buffer.slice(0, idx).trim();
+              buffer = buffer.slice(idx + 1);
+              if (!line) continue;
+              try {
+                const payload = JSON.parse(line);
+                const items = Array.isArray(payload) ? payload : [payload];
+                for (const item of items) handleServerMessage(item, (msg) => outbox.push(msg));
+              } catch (err) {
+                log(`Stream parse error: ${err.message || err}`);
+              }
+            }
+          }
+        } catch (err) {
+          log(`HTTP stream error: ${err.message || err}`);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    }
+
     async function loop() {
       try {
         const next = outbox.shift();
         const body = next ? { role: 'proxy', message: next } : {};
-        const url = `${baseHttp}/api/longpoll/${encodeURIComponent(resolvedSession)}?role=proxy`;
+        const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=proxy`;
         dlog(
-          'HTTP longpoll',
+          'HTTP send',
           url,
           next ? JSON.stringify(next).slice(0, 200) : '',
           'curl:',
@@ -269,13 +307,13 @@ function ensureConnected(responder) {
           body: JSON.stringify(body),
           agent,
         });
-        dlog('HTTP recv status', res.status, res.statusText);
+        dlog('HTTP send status', res.status, res.statusText);
         if (!res.ok) {
           let bodyText = '';
           try {
             bodyText = await res.text();
           } catch (_) {}
-          log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+          log(`HTTP send failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
           if (shouldResendHello(res.status)) {
             dlog('Resending hello due to status', res.status);
             outbox.push({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
@@ -283,22 +321,8 @@ function ensureConnected(responder) {
           await new Promise((r) => setTimeout(r, 200));
           return;
         }
-        if (res.status === 200) {
-          const text = await res.text();
-          if (text) {
-            try {
-              const payload = JSON.parse(text);
-              const items = Array.isArray(payload) ? payload : [payload];
-              for (const item of items) {
-                handleServerMessage(item, (msg) => outbox.push(msg));
-              }
-            } catch (err) {
-              log(`Failed to parse payload: ${err.message || err}`);
-            }
-          }
-        }
       } catch (err) {
-        log(`HTTP poll error: ${err.message || err}`);
+        log(`HTTP send error: ${err.message || err}`);
         await new Promise((r) => setTimeout(r, 200));
       } finally {
         setImmediate(loop);
@@ -308,7 +332,8 @@ function ensureConnected(responder) {
     outbox.push({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
     currentTransport = 'http';
     loop();
-    log(`connected via HTTP longpoll to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
+    startStream();
+    log(`connected via HTTP stream/send to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
     return { server, transport: 'http' };
   }
 

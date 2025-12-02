@@ -203,18 +203,57 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
     const outbox = [];
+    let streamAbort = null;
 
     sendFn = (message) => {
       outbox.push(message);
     };
 
+    async function startStream() {
+      while (true) {
+        try {
+          const controller = new AbortController();
+          streamAbort = () => controller.abort();
+          const url = `${baseHttp}/api/stream/${encodeURIComponent(resolvedSession)}?role=lan`;
+          dlog('HTTP stream', url);
+          const res = await fetchHttp(url, { method: 'GET', agent: fetchAgent, signal: controller.signal });
+          if (!res.ok) {
+            log(`HTTP stream failed: ${res.status}`);
+            await new Promise((r) => setTimeout(r, 500));
+            continue;
+          }
+          const reader = res.body;
+          let buffer = '';
+          for await (const chunk of reader) {
+            buffer += chunk.toString();
+            let idx;
+            while ((idx = buffer.indexOf('\n')) !== -1) {
+              const line = buffer.slice(0, idx).trim();
+              buffer = buffer.slice(idx + 1);
+              if (!line) continue;
+              try {
+                const payload = JSON.parse(line);
+                const items = Array.isArray(payload) ? payload : [payload];
+                for (const item of items) handleMessage(item, (msg) => outbox.push(msg));
+              } catch (err) {
+                log(`Stream parse error: ${err.message || err}`);
+              }
+            }
+          }
+        } catch (err) {
+          log(`HTTP stream error: ${err.message || err}`);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    }
+
     async function loop() {
       try {
         const next = outbox.shift();
         const body = next ? { role: 'lan', message: next } : {};
-        const url = `${baseHttp}/api/longpoll/${encodeURIComponent(resolvedSession)}?role=lan`;
+        const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=lan`;
         dlog(
-          'HTTP longpoll',
+          'HTTP send',
           url,
           next ? JSON.stringify(next).slice(0, 200) : '',
           'curl:',
@@ -226,13 +265,13 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
           body: JSON.stringify(body),
           agent: fetchAgent,
         });
-        dlog('HTTP recv status', res.status, res.statusText);
+        dlog('HTTP send status', res.status, res.statusText);
         if (!res.ok) {
           let bodyText = '';
           try {
             bodyText = await res.text();
           } catch (_) {}
-          log(`HTTP recv failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+          log(`HTTP send failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
           if (shouldResendHello(res.status)) {
             dlog('Resending hello due to status', res.status);
             outbox.push({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
@@ -240,22 +279,8 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
           await new Promise((r) => setTimeout(r, 200));
           return;
         }
-        if (res.status === 200) {
-          const text = await res.text();
-          if (text) {
-            try {
-              const payload = JSON.parse(text);
-              const items = Array.isArray(payload) ? payload : [payload];
-              for (const item of items) {
-                handleMessage(item, (msg) => outbox.push(msg));
-              }
-            } catch (err) {
-              log(`Failed to parse payload: ${err.message || err}`);
-            }
-          }
-        }
       } catch (err) {
-        log(`HTTP poll error: ${err.message || err}`);
+        log(`HTTP send error: ${err.message || err}`);
         await new Promise((r) => setTimeout(r, 200));
       } finally {
         setImmediate(loop);
@@ -264,7 +289,8 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
 
     outbox.push({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
     loop();
-    log(`using HTTP longpoll to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    startStream();
+    log(`using HTTP stream/send to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     return { transport: 'http' };
   }
 
