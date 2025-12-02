@@ -31,6 +31,28 @@ if [ "$DEBUG" = "true" ] || [ "$DEBUG" = "1" ]; then
   DEBUG_FLAG="--debug"
 fi
 
+parse_server_and_session() {
+  # outputs "server_url session"
+  url="$1"
+  session="$2"
+  node -e "
+    try {
+      const u = new URL(process.argv[1]);
+      let session = process.argv[2] || '';
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (!session && parts.length) {
+        session = parts.pop();
+        u.pathname = parts.join('/');
+      }
+      console.log(u.toString().replace(/\/$/, ''));
+      console.log(session);
+    } catch (e) {
+      console.log('');
+      console.log(session || '');
+    }
+  " "$url" "$session"
+}
+
 case "$ROLE" in
   server)
     PORT="$(env_or PORT 8080)"
@@ -39,9 +61,18 @@ case "$ROLE" in
     ;;
   lan)
     SERVER_URL="$(env_or SERVER_URL '')"
+    SERVER="$(env_or SERVER '')"
     SESSION="$(env_or SESSION '')"
+    if [ -z "$SERVER_URL" ] && [ -n "$SERVER" ]; then
+      SERVER_URL="$SERVER"
+    fi
+    read BASE_URL SESSION_CALC <<EOF
+$(parse_server_and_session "$SERVER_URL" "$SESSION")
+EOF
+    SERVER_URL="$BASE_URL"
+    SESSION="$SESSION_CALC"
     if [ -z "$SERVER_URL" ] || [ -z "$SESSION" ]; then
-      echo "SERVER_URL and SESSION (or RWP_SERVER_URL/RWP_SESSION) are required for lan role" >&2
+      echo "SERVER_URL/SESSION (or SERVER) is required for lan role" >&2
       exit 1
     fi
     PROXY="$(env_or PROXY '')"
@@ -58,9 +89,18 @@ case "$ROLE" in
     ;;
   proxy)
     SERVER_URL="$(env_or SERVER_URL '')"
+    SERVER="$(env_or SERVER '')"
     SESSION="$(env_or SESSION '')"
+    if [ -z "$SERVER_URL" ] && [ -n "$SERVER" ]; then
+      SERVER_URL="$SERVER"
+    fi
+    read BASE_URL SESSION_CALC <<EOF
+$(parse_server_and_session "$SERVER_URL" "$SESSION")
+EOF
+    SERVER_URL="$BASE_URL"
+    SESSION="$SESSION_CALC"
     if [ -z "$SERVER_URL" ] || [ -z "$SESSION" ]; then
-      echo "SERVER_URL and SESSION (or RWP_SERVER_URL/RWP_SESSION) are required for proxy role" >&2
+      echo "SERVER_URL/SESSION (or SERVER) is required for proxy role" >&2
       exit 1
     fi
     PORT="$(env_or PROXY_PORT 3128)"

@@ -51,6 +51,10 @@ Configure your browser/system proxy to `http://127.0.0.1:3128`. HTTP and HTTPS (
   `rwp lan https://your-rwp-endpoint.example.com/my-session --transport http --proxy http://proxy:3128`  
   `rwp proxy https://your-rwp-endpoint.example.com/my-session 3128 --transport http --proxy http://proxy:3128`
 
+## Docker
+- Image: `<dockerhub_user>/remote-ws-proxy:<tag>` (see `DOCKER.md` for full env reference).
+- Roles via env: `ROLE` = server|lan|proxy; `SERVER_URL` can embed the session path, or use `SERVER` + `SESSION`.
+
 ### Run via npx directly from GitHub (no local clone)
 
 ```bash
