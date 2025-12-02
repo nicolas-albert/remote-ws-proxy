@@ -253,49 +253,45 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     const idleDelayMs = 200;
 
     async function loop() {
-      try {
-        let next = outbox.shift();
+      while (true) {
+        const next = outbox.shift();
         if (!next) {
           await new Promise((r) => setTimeout(r, idleDelayMs));
-          next = outbox.shift();
-          if (!next) {
-            return setImmediate(loop);
-          }
+          continue;
         }
-        const body = next ? { role: 'lan', message: next } : {};
+        const body = { role: 'lan', message: next };
         const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=lan`;
         dlog(
           'HTTP send',
           url,
-          next ? JSON.stringify(next).slice(0, 200) : '',
+          JSON.stringify(next).slice(0, 200),
           'curl:',
           `curl -k${fetchAgent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${JSON.stringify(body)}' ${url}`
         );
-        const res = await fetchHttp(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          agent: fetchAgent,
-        });
-        dlog('HTTP send status', res.status, res.statusText);
-        if (!res.ok) {
-          let bodyText = '';
-          try {
-            bodyText = await res.text();
-          } catch (_) {}
-          log(`HTTP send failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
-          if (shouldResendHello(res.status)) {
-            dlog('Resending hello due to status', res.status);
-            outbox.push({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
+        try {
+          const res = await fetchHttp(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+            agent: fetchAgent,
+          });
+          dlog('HTTP send status', res.status, res.statusText);
+          if (!res.ok) {
+            let bodyText = '';
+            try {
+              bodyText = await res.text();
+            } catch (_) {}
+            log(`HTTP send failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
+            if (shouldResendHello(res.status)) {
+              dlog('Resending hello due to status', res.status);
+              outbox.push({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
+            }
+            await new Promise((r) => setTimeout(r, 200));
           }
+        } catch (err) {
+          log(`HTTP send error: ${err.message || err}`);
           await new Promise((r) => setTimeout(r, 200));
-          return;
         }
-      } catch (err) {
-        log(`HTTP send error: ${err.message || err}`);
-        await new Promise((r) => setTimeout(r, 200));
-      } finally {
-        setImmediate(loop);
       }
     }
 
