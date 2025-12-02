@@ -248,22 +248,17 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
       }
     }
 
-    const parallelPolls = 3;
-    const startPollers = () => {
-      for (let i = 0; i < parallelPolls; i += 1) {
-        (async function loop() {
-          while (true) {
-            await pollOnce();
-          }
-        })();
+    async function startPoller() {
+      for (;;) {
+        await pollOnce();
       }
-    };
+    }
 
     sendHttp({ type: 'hello', role: 'lan', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
     sendFn = sendHttp;
-    startPollers();
+    startPoller();
     log(`using HTTP tunnel to ${baseHttp}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
     return { transport: 'http' };
   }

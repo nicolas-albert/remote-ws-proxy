@@ -291,21 +291,16 @@ function ensureConnected(responder) {
       }
     }
 
-    const parallelPolls = 3;
-    const startPollers = () => {
-      for (let i = 0; i < parallelPolls; i += 1) {
-        (async function loop() {
-          while (true) {
-            await pollOnce();
-          }
-        })();
+    async function startPoller() {
+      for (;;) {
+        await pollOnce();
       }
-    };
+    }
 
     sendHttp({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION }).catch((err) =>
       log(`Hello failed: ${err.message || err}`)
     );
-    startPollers();
+    startPoller();
     currentTransport = 'http';
     log(`connected via HTTP tunnel to ${baseHttp}${agentUrl ? ` through proxy ${agentUrl}` : ''}`);
     return { server, transport: 'http' };
