@@ -288,7 +288,10 @@ function ensureConnected(responder) {
           if (text) {
             try {
               const payload = JSON.parse(text);
-              handleServerMessage(payload, (msg) => outbox.push(msg));
+              const items = Array.isArray(payload) ? payload : [payload];
+              for (const item of items) {
+                handleServerMessage(item, (msg) => outbox.push(msg));
+              }
             } catch (err) {
               log(`Failed to parse payload: ${err.message || err}`);
             }

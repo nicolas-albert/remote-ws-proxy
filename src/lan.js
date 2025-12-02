@@ -245,7 +245,10 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
           if (text) {
             try {
               const payload = JSON.parse(text);
-              handleMessage(payload, (msg) => outbox.push(msg));
+              const items = Array.isArray(payload) ? payload : [payload];
+              for (const item of items) {
+                handleMessage(item, (msg) => outbox.push(msg));
+              }
             } catch (err) {
               log(`Failed to parse payload: ${err.message || err}`);
             }

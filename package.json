@@ -1,6 +1,6 @@
 {
   "name": "remote-ws-proxy",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Remote HTTP proxy over WebSocket with server, LAN agent, and local proxy CLI.",
   "main": "src/server.js",
   "bin": {
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node ./bin/rwp.js server",
-    "test": "echo \"No automated tests yet\" && exit 0"
+    "test": "node ./scripts/e2e.js"
   },
   "repository": {
     "type": "git",
