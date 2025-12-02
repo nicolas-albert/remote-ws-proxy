@@ -8,6 +8,11 @@ const scenarios = [
   { name: 'lan-http_proxy-http', lanTransport: 'http', proxyTransport: 'http' },
 ];
 
+const targets = [
+  { name: 'ifconfig.io', url: 'https://ifconfig.io' },
+  { name: 'wikipedia', url: 'https://fr.wikipedia.org/wiki/Wikip%C3%A9dia:Accueil_principal' },
+];
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -85,15 +90,19 @@ async function runScenario(idx, scenario) {
     procs.push(prx);
     await delay(1500);
 
-    const curlCmd = ['curl', '-k', '--max-time', '20', '--proxy', `http://127.0.0.1:${proxyPort}`, 'https://ifconfig.io'];
-    const curl = spawn(curlCmd[0], curlCmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
-    let curlOut = '';
-    let curlErr = '';
-    curl.stdout.on('data', (d) => (curlOut += d.toString()));
-    curl.stderr.on('data', (d) => (curlErr += d.toString()));
-    const code = await new Promise((resolve) => curl.on('close', resolve));
+    const results = [];
+    for (const target of targets) {
+      const curlCmd = ['curl', '-k', '--max-time', '20', '--proxy', `http://127.0.0.1:${proxyPort}`, target.url];
+      const curl = spawn(curlCmd[0], curlCmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+      let curlOut = '';
+      let curlErr = '';
+      curl.stdout.on('data', (d) => (curlOut += d.toString()));
+      curl.stderr.on('data', (d) => (curlErr += d.toString()));
+      const code = await new Promise((resolve) => curl.on('close', resolve));
+      results.push({ target: target.name, ok: code === 0, curlOut, curlErr });
+    }
 
-    return { ok: code === 0, curlOut, curlErr, scenario };
+    return { scenario, results };
   } finally {
     procs.reverse().forEach((p) => p.kill && p.kill());
     await delay(500);
@@ -106,17 +115,19 @@ async function main() {
     const res = await runScenario(i, scenarios[i]);
     results.push(res);
   }
-  const failed = results.filter((r) => !r.ok);
+  let anyFail = false;
   results.forEach((r) => {
-    console.log(`\n[${r.scenario.name}] ${r.ok ? 'OK' : 'FAIL'}`);
-    if (r.ok) {
-      console.log(r.curlOut.trim());
-    } else {
-      console.log(r.curlErr || r.curlOut);
-    }
+    console.log(`\n[${r.scenario.name}]`);
+    r.results.forEach((t) => {
+      const status = t.ok ? 'OK' : 'FAIL';
+      console.log(`  ${t.target}: ${status}`);
+      if (!t.ok) {
+        anyFail = true;
+        console.log(t.curlErr || t.curlOut);
+      }
+    });
   });
-  if (failed.length) {
-    console.error(`\nFailures: ${failed.map((f) => f.scenario.name).join(', ')}`);
+  if (anyFail) {
     process.exit(1);
   }
 }
