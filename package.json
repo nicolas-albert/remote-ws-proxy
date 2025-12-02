@@ -1,6 +1,6 @@
 {
   "name": "remote-ws-proxy",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Remote HTTP proxy over WebSocket with server, LAN agent, and local proxy CLI.",
   "main": "src/server.js",
   "bin": {

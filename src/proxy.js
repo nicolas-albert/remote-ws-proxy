@@ -37,6 +37,9 @@ function startProxy({
   transport = 'ws',
   debug = false,
 }) {
+  if (insecure && !process.env.NODE_TLS_REJECT_UNAUTHORIZED) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  }
   const { wsUrl, httpUrl, session: resolvedSession } = parseServerTarget(serverUrl, session);
   const log = createLogger(`proxy:${resolvedSession}`);
   const dlog = createDebugLogger(debug, `proxy:${resolvedSession}:debug`);
