@@ -249,21 +249,16 @@ function ensureConnected(responder) {
     const httpBase = new URL(httpUrl);
     const baseHttp = httpBase.origin; // server root (no session path)
     const outbox = [];
-    let streamAbort = null;
     const idleDelayMs = 200;
 
-    sendHttp = (message) => {
-      outbox.push(message);
-    };
+    sendHttp = (message) => outbox.push(message);
 
     async function startStream() {
       while (true) {
         try {
-          const controller = new AbortController();
-          streamAbort = () => controller.abort();
           const url = `${baseHttp}/api/stream/${encodeURIComponent(resolvedSession)}?role=proxy`;
           dlog('HTTP stream', url);
-          const res = await fetchHttp(url, { method: 'GET', agent, signal: controller.signal });
+          const res = await fetchHttp(url, { method: 'GET', agent });
           if (!res.ok) {
             log(`HTTP stream failed: ${res.status}`);
             await new Promise((r) => setTimeout(r, 500));
@@ -295,43 +290,29 @@ function ensureConnected(responder) {
 
     async function loop() {
       while (true) {
-        const next = outbox.shift();
+        let next = outbox.shift();
         if (!next) {
           await new Promise((r) => setTimeout(r, idleDelayMs));
-          continue;
+          next = outbox.shift();
+          if (!next) continue;
         }
         const body = { role: 'proxy', message: next };
-        const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=proxy`;
-        dlog(
-          'HTTP send',
-          url,
-          JSON.stringify(next).slice(0, 200),
-          'curl:',
-          `curl -k${agent ? ' --proxy ' + agentUrl : ''} -H "content-type: application/json" -d '${JSON.stringify(body)}' ${url}`
-        );
         try {
+          const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=proxy`;
+          dlog('HTTP send', url, JSON.stringify(body.message || body));
           const res = await fetchHttp(url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(body),
             agent,
           });
-          dlog('HTTP send status', res.status, res.statusText);
           if (!res.ok) {
-            let bodyText = '';
-            try {
-              bodyText = await res.text();
-            } catch (_) {}
-            log(`HTTP send failed: ${res.status}${bodyText ? ` body: ${bodyText.slice(0, 200)}` : ''}`);
-            if (shouldResendHello(res.status)) {
-              dlog('Resending hello due to status', res.status);
-              outbox.push({ type: 'hello', role: 'proxy', session: resolvedSession, protocolVersion: PROTOCOL_VERSION });
-            }
-            await new Promise((r) => setTimeout(r, 200));
+            log(`HTTP send failed: ${res.status} ${res.statusText || ''}`.trim());
           }
         } catch (err) {
           log(`HTTP send error: ${err.message || err}`);
-          await new Promise((r) => setTimeout(r, 200));
+          outbox.unshift(next);
+          await new Promise((r) => setTimeout(r, 500));
         }
       }
     }

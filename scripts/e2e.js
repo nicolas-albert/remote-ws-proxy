@@ -13,6 +13,8 @@ const targets = [
   { name: 'wikipedia', url: 'https://fr.wikipedia.org/wiki/Wikip%C3%A9dia:Accueil_principal' },
 ];
 
+const MAX_DURATION_MS = 1000;
+
 const { homepage } = require('../package.json');
 
 function delay(ms) {
@@ -117,10 +119,20 @@ async function runScenario(idx, scenario) {
       const curl = spawn(curlCmd[0], curlCmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
       let curlOut = '';
       let curlErr = '';
+      const start = Date.now();
       curl.stdout.on('data', (d) => (curlOut += d.toString()));
       curl.stderr.on('data', (d) => (curlErr += d.toString()));
       const code = await new Promise((resolve) => curl.on('close', resolve));
-      results.push({ target: target.name, ok: code === 0, curlOut, curlErr });
+      const durationMs = Date.now() - start;
+      const ok = code === 0 && durationMs <= MAX_DURATION_MS;
+      results.push({
+        target: target.name,
+        ok,
+        durationMs,
+        curlOut,
+        curlErr: code !== 0 ? curlErr || curlOut : curlErr,
+        reason: code !== 0 ? 'curl failed' : durationMs > MAX_DURATION_MS ? `slow: ${durationMs}ms` : '',
+      });
     }
 
     return { scenario, results };
@@ -141,9 +153,11 @@ async function main() {
     console.log(`\n[${r.scenario.name}]`);
     r.results.forEach((t) => {
       const status = t.ok ? 'OK' : 'FAIL';
-      console.log(`  ${t.target}: ${status}`);
+      const timing = typeof t.durationMs === 'number' ? ` (${t.durationMs} ms)` : '';
+      console.log(`  ${t.target}: ${status}${timing}`);
       if (!t.ok) {
         anyFail = true;
+        if (t.reason) console.log(`    reason: ${t.reason}`);
         console.log(t.curlErr || t.curlOut);
       }
     });
