@@ -250,9 +250,18 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
       }
     }
 
+    const idleDelayMs = 200;
+
     async function loop() {
       try {
-        const next = outbox.shift();
+        let next = outbox.shift();
+        if (!next) {
+          await new Promise((r) => setTimeout(r, idleDelayMs));
+          next = outbox.shift();
+          if (!next) {
+            return setImmediate(loop);
+          }
+        }
         const body = next ? { role: 'lan', message: next } : {};
         const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=lan`;
         dlog(

@@ -250,6 +250,7 @@ function ensureConnected(responder) {
     const baseHttp = httpBase.origin; // server root (no session path)
     const outbox = [];
     let streamAbort = null;
+    const idleDelayMs = 200;
 
     sendHttp = (message) => {
       outbox.push(message);
@@ -294,7 +295,14 @@ function ensureConnected(responder) {
 
     async function loop() {
       try {
-        const next = outbox.shift();
+        let next = outbox.shift();
+        if (!next) {
+          await new Promise((r) => setTimeout(r, idleDelayMs));
+          next = outbox.shift();
+          if (!next) {
+            return setImmediate(loop);
+          }
+        }
         const body = next ? { role: 'proxy', message: next } : {};
         const url = `${baseHttp}/api/send/${encodeURIComponent(resolvedSession)}?role=proxy`;
         dlog(
