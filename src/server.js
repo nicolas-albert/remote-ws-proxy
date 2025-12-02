@@ -10,25 +10,32 @@ function createChannel() {
   };
 }
 
+function flushPending(channel) {
+  if (channel.pending.length === 0) return false;
+  if (channel.queue.length === 0) return false;
+  const { res, timer } = channel.pending.shift();
+  clearTimeout(timer);
+  const payload =
+    channel.queue.length === 1 ? channel.queue.shift() : channel.queue.splice(0, channel.queue.length);
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(payload));
+  return true;
+}
+
 function respondChannel(channel, payload) {
   if (channel.ws && channel.ws.readyState === WebSocket.OPEN) {
     safeSend(channel.ws, payload);
     return true;
   }
-   if (channel.pending.length > 0) {
-    const { res, timer } = channel.pending.shift();
-    clearTimeout(timer);
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(payload));
-    return true;
-  }
   channel.queue.push(payload);
+  flushPending(channel);
   return false;
 }
 
 function drainChannel(channel, res) {
   if (channel.queue.length > 0) {
-    const payload = channel.queue.shift();
+    const payload =
+      channel.queue.length === 1 ? channel.queue.shift() : channel.queue.splice(0, channel.queue.length);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(payload));
     return;
@@ -235,9 +242,10 @@ function startServer({ port = 8080, host = '0.0.0.0' } = {}) {
         const state = getSession(sessionName);
         const channel = state[role];
         if (channel.queue.length > 0) {
-          const msg = channel.queue.shift();
+          const payload =
+            channel.queue.length === 1 ? channel.queue.shift() : channel.queue.splice(0, channel.queue.length);
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify(msg));
+          res.end(JSON.stringify(payload));
           return;
         }
         const timer = setTimeout(() => {
