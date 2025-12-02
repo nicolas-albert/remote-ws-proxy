@@ -26,6 +26,7 @@ DEBUG="$(env_or DEBUG false)"
 
 if [ "$INSECURE" = "true" ] || [ "$INSECURE" = "1" ]; then
   INSECURE_FLAG="--insecure"
+  export NODE_TLS_REJECT_UNAUTHORIZED=0
 fi
 if [ "$DEBUG" = "true" ] || [ "$DEBUG" = "1" ]; then
   DEBUG_FLAG="--debug"
