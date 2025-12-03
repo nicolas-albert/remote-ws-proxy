@@ -1,12 +1,18 @@
 # remote-ws-proxy (rwp)
 
-Remote HTTP/HTTPS proxy transported over WebSockets. The CLI exposes three roles:
+Remote HTTP/HTTPS proxy transported over Socket.IO (WebSocket with HTTP long-poll fallback). The CLI exposes three roles:
 
 - `rwp server` — relay hub that routes messages between a LAN agent and one or more proxies.
 - `rwp lan <server-url> [session]` — agent that runs inside the private network and executes HTTP/TCP requests.
 - `rwp proxy <server-url> [session] [port]` — local HTTP proxy; configure your browser to point to it.
 
-> Browser → `rwp proxy` → WebSocket → `rwp server` → WebSocket → `rwp lan` → target host.
+```mermaid
+flowchart LR
+  Browser[Browser / App] -->|HTTP/HTTPS via proxy| Proxy[rwp proxy (local)]
+  Proxy -->|Socket.IO WS / HTTP polling| Server[rwp server (public)]
+  Server -->|Socket.IO WS / HTTP polling| Lan[rwp lan (inside LAN)]
+  Lan --> Target[Target hosts on LAN or internet]
+```
 
 ## Quick start
 
@@ -45,11 +51,12 @@ rwp proxy https://your-rwp-endpoint.example.com/my-session 3128
 Configure your browser/system proxy to `http://127.0.0.1:3128`. HTTP and HTTPS (via CONNECT) are supported.
 
 ### Transport modes
-- Default: WebSocket (`--transport ws`).
-- Fallback when WS is blocked by proxies: HTTP long-poll tunnel (`--transport http`), using `/api/tunnel/.../send` and `/recv` on the server (no Upgrade).
-- Example with HTTP transport and outbound proxy:  
-  `rwp lan https://your-rwp-endpoint.example.com/my-session --transport http --proxy http://proxy:3128`  
-  `rwp proxy https://your-rwp-endpoint.example.com/my-session 3128 --transport http --proxy http://proxy:3128`
+- `--transport auto` (default): tries WebSocket first, falls back to HTTP long-poll if WS is blocked (e.g., corporate proxy returning 403 on Upgrade).
+- `--transport ws`: WebSocket only.
+- `--transport http`: HTTP long-poll only (no Upgrade).
+Example with HTTP transport and outbound proxy:  
+`rwp lan https://your-rwp-endpoint.example.com/my-session --transport http --proxy http://proxy:3128`  
+`rwp proxy https://your-rwp-endpoint.example.com/my-session 3128 --transport http --proxy http://proxy:3128`
 
 ## Docker
 - Image: `<dockerhub_user>/remote-ws-proxy:<tag>` (see `DOCKER.md` for full env reference).

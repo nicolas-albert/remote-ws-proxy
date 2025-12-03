@@ -78,7 +78,7 @@ async function connectThroughProxy(proxyUrl, targetHost, targetPort, insecure) {
 function chooseTransports(mode) {
   if (mode === 'ws') return ['websocket'];
   if (mode === 'http') return ['polling'];
-  return ['polling', 'websocket']; // auto defaults to polling-first (survives WS 403)
+  return ['websocket', 'polling']; // auto: try WS first, fallback to polling
 }
 
 function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false, transport = 'auto', debug = false }) {

@@ -39,3 +39,12 @@ jobs:
         with:
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/remote-ws-proxy:${{ github.ref_name }},${{ secrets.DOCKERHUB_USERNAME }}/remote-ws-proxy:latest
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ env.DH_USER }}
+          password: ${{ env.DH_TOKEN }}
+          repository: ${{ env.DH_USER }}/remote-ws-proxy
+          short-description: "Remote HTTP/HTTPS proxy over Socket.IO (server/lan/proxy CLI)"
+          readme-filepath: DOCKER.md

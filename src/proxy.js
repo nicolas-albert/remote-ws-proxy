@@ -25,7 +25,7 @@ function buildProxyAgent(proxyUrl, insecure) {
 function chooseTransports(mode) {
   if (mode === 'ws') return ['websocket'];
   if (mode === 'http') return ['polling'];
-  return ['polling', 'websocket']; // auto defaults to polling-first
+  return ['websocket', 'polling']; // auto: try WS first, fallback to polling
 }
 
 function startProxy({
