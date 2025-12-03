@@ -221,10 +221,6 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     log(`socket error: ${err.message || err}`);
   });
 
-  if (transport && transport !== 'io') {
-    log(`ignoring transport=${transport}, socket.io is now the only transport`);
-  }
-
   return { socket };
 }
 
