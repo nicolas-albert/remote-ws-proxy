@@ -251,6 +251,7 @@ function startProxy({
   });
 
   const transports = chooseTransports(transport);
+  if (debug) process.env.DEBUG = 'socket.io-client:*';
 
   socket = io(ioUrl, {
     transports,

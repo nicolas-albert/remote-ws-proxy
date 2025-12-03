@@ -193,6 +193,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
   }
 
   const transports = chooseTransports(transport);
+  if (debug) process.env.DEBUG = 'socket.io-client:*';
 
   socket = io(ioUrl, {
     transports,
