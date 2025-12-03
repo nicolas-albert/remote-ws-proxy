@@ -50,6 +50,7 @@ function startProxy({
   const dlog = createDebugLogger(debug, `proxy:${resolvedSession}:debug`);
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   const agent = buildProxyAgent(agentUrl, insecure);
+  const agentLabel = agentUrl ? ` via proxy ${agentUrl}` : '';
 
   const pendingHttp = new Map(); // id -> {res, timer}
   const tunnels = new Map(); // id -> {clientSocket, acked, queue, head}
@@ -263,8 +264,14 @@ function startProxy({
   });
 
   socket.on('connect', () => {
-    log(`connected to server ${ioUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    const t = socket?.io?.engine?.transport?.name;
+    log(`connected to server ${ioUrl} (transport=${t || 'unknown'}${agentLabel})`);
     flush();
+  });
+
+  socket.io.engine.on('upgrade', () => {
+    const t = socket?.io?.engine?.transport?.name;
+    log(`socket.io upgraded transport=${t || 'unknown'}${agentLabel}`);
   });
 
   socket.on('msg', (payload) => handleServerMessage(payload));

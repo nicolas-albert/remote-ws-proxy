@@ -94,6 +94,7 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
   const agentUrl = proxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
   const agent = buildProxyAgent(agentUrl, insecure);
   const tunnelProxyUrl = tunnelProxy === true ? agentUrl : tunnelProxy;
+  const agentLabel = agentUrl ? ` via proxy ${agentUrl}` : '';
 
   const tunnels = new Map(); // id -> net.Socket
   const outbox = [];
@@ -205,8 +206,15 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
   });
 
   socket.on('connect', () => {
-    log(`connected to server ${ioUrl}${agentUrl ? ` via proxy ${agentUrl}` : ''}`);
+    const t = socket?.io?.engine?.transport?.name;
+    log(`connected to server ${ioUrl} (transport=${t || 'unknown'}${agentLabel})`);
     flush();
+  });
+
+  // Log when polling upgrades to websocket
+  socket.io.engine.on('upgrade', () => {
+    const t = socket?.io?.engine?.transport?.name;
+    log(`socket.io upgraded transport=${t || 'unknown'}${agentLabel}`);
   });
 
   socket.on('msg', (payload) => handleMessage(payload));
