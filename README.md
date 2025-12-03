@@ -8,10 +8,10 @@ Remote HTTP/HTTPS proxy transported over Socket.IO (WebSocket with HTTP long-pol
 
 ```mermaid
 flowchart LR
-    Browser[Browser / App] -->|HTTP/HTTPS via proxy| Proxy[rwp proxy (local)]
-    Proxy -->|Socket.IO WS / HTTP polling| Server[rwp server (public)]
-    Server -->|Socket.IO WS / HTTP polling| Lan[rwp lan (inside LAN)]
-    Lan --> Target[Target hosts on LAN or internet]
+    Browser[Browser] -->|HTTP/HTTPS via proxy| Proxy[rwp proxy (local)]
+    Proxy -->|Socket.IO (WS or HTTP polling)| Server[rwp server (public)]
+    Server -->|Socket.IO (WS or HTTP polling)| Lan[rwp lan (inside LAN)]
+    Lan --> Target[Targets on LAN or internet]
 ```
 
 ## Quick start
