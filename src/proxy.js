@@ -22,6 +22,12 @@ function buildProxyAgent(proxyUrl, insecure) {
   return url.protocol === 'http:' ? new HttpProxyAgent(url, opts) : new HttpsProxyAgent(url, opts);
 }
 
+function chooseTransports(mode) {
+  if (mode === 'ws') return ['websocket'];
+  if (mode === 'http') return ['polling'];
+  return ['polling', 'websocket']; // auto defaults to polling-first
+}
+
 function startProxy({
   serverUrl,
   session,
@@ -29,7 +35,7 @@ function startProxy({
   host = '127.0.0.1',
   proxyUrl,
   insecure = false,
-  transport,
+  transport = 'auto',
   debug = false,
 }) {
   if (insecure && !process.env.NODE_TLS_REJECT_UNAUTHORIZED) {
@@ -243,8 +249,10 @@ function startProxy({
     log(`HTTP proxy listening on http://${host}:${port}`);
   });
 
+  const transports = chooseTransports(transport);
+
   socket = io(ioUrl, {
-    transports: ['polling', 'websocket'],
+    transports,
     forceNew: true,
     reconnection: true,
     query: { session: resolvedSession, role: 'proxy', protocolVersion: PROTOCOL_VERSION },

@@ -75,7 +75,13 @@ async function connectThroughProxy(proxyUrl, targetHost, targetPort, insecure) {
   });
 }
 
-function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false, transport, debug = false }) {
+function chooseTransports(mode) {
+  if (mode === 'ws') return ['websocket'];
+  if (mode === 'http') return ['polling'];
+  return ['polling', 'websocket']; // auto defaults to polling-first (survives WS 403)
+}
+
+function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false, transport = 'auto', debug = false }) {
   if (insecure && !process.env.NODE_TLS_REJECT_UNAUTHORIZED) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   }
@@ -185,8 +191,10 @@ function startLan({ serverUrl, session, proxyUrl, tunnelProxy, insecure = false,
     }
   }
 
+  const transports = chooseTransports(transport);
+
   socket = io(ioUrl, {
-    transports: ['polling', 'websocket'],
+    transports,
     forceNew: true,
     reconnection: true,
     query: { session: resolvedSession, role: 'lan', protocolVersion: PROTOCOL_VERSION },

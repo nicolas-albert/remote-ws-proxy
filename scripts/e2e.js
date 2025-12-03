@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 const { spawn } = require('child_process');
 
-const scenarios = [{ name: 'socket-io', lanTransport: 'io', proxyTransport: 'io' }];
+const scenarios = [
+  { name: 'socket-io-auto', lanTransport: 'auto', proxyTransport: 'auto' },
+  { name: 'socket-io-ws', lanTransport: 'ws', proxyTransport: 'ws' },
+  { name: 'socket-io-http', lanTransport: 'http', proxyTransport: 'http' },
+];
 
 const targets = [
   { name: 'ifconfig.io', url: 'https://ifconfig.io' },
@@ -72,13 +76,23 @@ async function runScenario(idx, scenario) {
     }
 
     // lan
-    const lanArgs = ['bin/rwp.js', 'lan', session, serverUrl];
+    const lanArgs = ['bin/rwp.js', 'lan', '--transport', scenario.lanTransport, session, serverUrl];
     const lan = startProc('node', lanArgs);
     procs.push(lan);
     await delay(1000);
 
     // proxy
-    const proxyArgs = ['bin/rwp.js', 'proxy', session, serverUrl, `${proxyPort}`, '--host', '127.0.0.1'];
+    const proxyArgs = [
+      'bin/rwp.js',
+      'proxy',
+      '--transport',
+      scenario.proxyTransport,
+      session,
+      serverUrl,
+      `${proxyPort}`,
+      '--host',
+      '127.0.0.1',
+    ];
     const prx = startProc('node', proxyArgs);
     procs.push(prx);
     await delay(1500);
